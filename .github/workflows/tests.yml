@@ -24,6 +24,9 @@ jobs:
       - name: Run unit tests
         run: python -m pytest tests -q
 
+      - name: Check admin UI JavaScript syntax
+        run: node --check docs/app.js
+
       - name: Validate workflow YAML
         run: |
           python - <<'PY'
