@@ -7,7 +7,15 @@
 import json
 import re
 
-from src.config import ACCOUNTS_FILE, POST_PROMPT_FILE, QUEUE_FILE, ROOT, Account
+from src.config import (
+    ACCOUNTS_FILE,
+    FORBIDDEN_ACCOUNT_KEYS,
+    POST_PROMPT_FILE,
+    QUEUE_FILE,
+    ROOT,
+    THREADS_TOKEN_PREFIX,
+    Account,
+)
 
 DOCS = ROOT / "docs"
 APP_JS = DOCS / "app.js"
@@ -88,10 +96,34 @@ def test_管理画面の既定設定がsettings_jsonと矛盾しない():
 
 
 def test_トークンのシークレット名の規則がPython側と一致する():
-    # JS の defaultTokenEnv() と Account.default_token_env が同じ規則であること
+    # JS の tokenSecretName() と Account.token_secret_name が同じ規則であること
     source = APP_JS.read_text(encoding="utf-8")
-    assert "THREADS_TOKEN_${slugify(accountId).toUpperCase()}" in source
-    assert Account(id="beauty_lab", name="x").default_token_env == "THREADS_TOKEN_BEAUTY_LAB"
+    assert "${THREADS_TOKEN_PREFIX}${slugify(accountId).toUpperCase()}" in source
+    assert f'const THREADS_TOKEN_PREFIX = "{THREADS_TOKEN_PREFIX}"' in source
+    assert Account(id="beauty_lab", name="x").token_secret_name == "THREADS_TOKEN_BEAUTY_LAB"
+
+
+def test_管理画面が保存する項目に機密フィールドが無い():
+    keys = _js_keys("ACCOUNT_DEFAULTS")
+    assert not keys & FORBIDDEN_ACCOUNT_KEYS, keys & FORBIDDEN_ACCOUNT_KEYS
+
+
+def test_管理画面はSecretsAPIで暗号化して保存している():
+    source = APP_JS.read_text(encoding="utf-8")
+    # 公開鍵の取得 → sealed box で暗号化 → Secrets API へ PUT
+    assert "/actions/secrets/public-key" in source
+    assert "crypto_box_seal" in source
+    assert "encrypted_value" in source and "key_id" in source
+
+
+def test_暗号化ライブラリが同梱されている():
+    for name in ("libsodium.js", "libsodium-wrappers.js"):
+        path = DOCS / "vendor" / name
+        assert path.is_file() and path.stat().st_size > 1000, f"docs/vendor/{name} がありません"
+    html = (DOCS / "index.html").read_text(encoding="utf-8")
+    # CDN ではなく同梱ファイルを読み込んでいること
+    assert 'src="vendor/libsodium.js"' in html
+    assert 'src="vendor/libsodium-wrappers.js"' in html
 
 
 def test_トークンがソースへ直書きされていない():

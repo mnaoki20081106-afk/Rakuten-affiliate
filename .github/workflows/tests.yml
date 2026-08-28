@@ -46,7 +46,7 @@ jobs:
           accounts = {"accounts": [
               {"id": f"smoke{i}", "name": f"スモーク{i}", "genre": f"ジャンル{i}",
                "worldview": "世界観", "strength": "強み", "tone": "丁寧語",
-               "search_keywords": [f"kw{i}"], "threads_access_token": "dummy"}
+               "search_keywords": [f"kw{i}"]}
               for i in range(1, 11)
           ]}
           json.dump(accounts, open("/tmp/smoke/accounts.json", "w", encoding="utf-8"), ensure_ascii=False)

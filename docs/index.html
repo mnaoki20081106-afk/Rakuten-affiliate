@@ -23,6 +23,9 @@
     };
   </script>
   <link rel="stylesheet" href="style.css" />
+  <!-- GitHub Secrets の暗号化に使う。CDN障害の影響を受けないようリポジトリへ同梱している -->
+  <script src="vendor/libsodium.js"></script>
+  <script src="vendor/libsodium-wrappers.js"></script>
 </head>
 <body class="h-full bg-slate-100 text-slate-800 dark:bg-slate-950 dark:text-slate-100 font-sans">
 
@@ -44,8 +47,8 @@
         <input id="login-token" type="password" class="input font-mono" placeholder="ghp_... または github_pat_..."
                autocomplete="off" required />
         <p class="hint">
-          classic トークンなら <code class="code">repo</code> 権限、
-          fine-grained なら <code class="code">Contents: Read and write</code> が必要です。
+          classic トークンなら <code class="code">repo</code> 権限だけでOKです。
+          （設定ファイルの読み書きと、APIキーの暗号化保存の両方に使います）
         </p>
       </div>
 
@@ -81,7 +84,9 @@
       <ol class="list-decimal list-inside mt-2 space-y-1">
         <li>GitHubの <code class="code">Settings → Developer settings → Personal access tokens</code> を開く</li>
         <li><code class="code">Tokens (classic)</code> → <code class="code">Generate new token (classic)</code></li>
-        <li>スコープの <code class="code">repo</code> にチェックを入れて発行</li>
+        <li>スコープの <code class="code">repo</code> にチェックを入れて発行
+            （fine-grained の場合は <code class="code">Contents</code> と
+             <code class="code">Secrets</code> を Read and write に）</li>
         <li>表示された <code class="code">ghp_...</code> をコピーして上に貼り付ける</li>
       </ol>
     </details>
@@ -105,16 +110,23 @@
     <nav class="mx-auto max-w-6xl px-4 flex gap-1 overflow-x-auto" id="tabs">
       <button class="tab" data-view="dashboard">ダッシュボード</button>
       <button class="tab" data-view="accounts">アカウント管理</button>
+      <button class="tab" data-view="secrets">APIキー</button>
       <button class="tab" data-view="settings">共通設定</button>
       <button class="tab" data-view="prompt">プロンプト</button>
     </nav>
   </header>
 
   <main class="mx-auto w-full max-w-6xl flex-1 p-4 space-y-4">
+    <div id="sodium-error" class="hidden alert-error">
+      暗号化ライブラリ(libsodium)を読み込めませんでした。APIキーやトークンの保存はできません。
+      ページを再読み込みしても直らない場合は、<code class="code">docs/vendor/</code> のファイルが
+      欠けていないか確認してください。
+    </div>
     <div id="loading" class="card p-8 text-center text-muted">読み込み中...</div>
 
     <section id="view-dashboard" class="view hidden space-y-4"></section>
     <section id="view-accounts" class="view hidden space-y-4"></section>
+    <section id="view-secrets" class="view hidden space-y-4"></section>
     <section id="view-settings" class="view hidden space-y-4"></section>
     <section id="view-prompt" class="view hidden space-y-4"></section>
   </main>
@@ -134,6 +146,7 @@
 
     <form id="account-form" class="p-4 space-y-4">
       <input type="hidden" id="acc-index" />
+      <input type="hidden" id="acc-original-id" />
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
@@ -145,11 +158,6 @@
           <input id="acc-id" class="input font-mono" placeholder="beauty_lab" required />
           <p class="hint">半角英数字と <code class="code">_</code> のみ。シークレット名の元になります。</p>
         </div>
-      </div>
-
-      <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3 text-sm">
-        <div class="text-muted mb-1">登録すべきGitHub Secret名</div>
-        <code id="acc-secret-name" class="code block break-all">-</code>
       </div>
 
       <fieldset class="space-y-4 border-t border-slate-200 dark:border-slate-800 pt-4">
@@ -199,22 +207,29 @@
 
       <fieldset class="space-y-4 border-t border-slate-200 dark:border-slate-800 pt-4">
         <legend class="font-semibold text-sm">Threads API</legend>
-        <div>
-          <label class="label" for="acc-token-env">トークンの環境変数名（推奨）</label>
-          <input id="acc-token-env" class="input font-mono" placeholder="空ならIDから自動決定" />
-          <p class="hint">GitHub Secretsの名前。公開リポジトリではこちらを使ってください。</p>
+
+        <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3 space-y-2">
+          <div class="text-xs text-muted">保存先のGitHub Secret名（アカウントIDから自動決定）</div>
+          <code id="acc-secret-name" class="code block break-all">-</code>
+          <div id="acc-secret-status" class="flex flex-wrap items-center gap-2"></div>
         </div>
+
         <div>
-          <label class="label" for="acc-token">アクセストークンを直接保存（非推奨）</label>
-          <input id="acc-token" type="password" class="input font-mono" autocomplete="off" />
+          <label class="label" for="acc-token">Threadsアクセストークン</label>
+          <input id="acc-token" type="password" class="input font-mono" autocomplete="off"
+                 placeholder="THDS... （変更しない場合は空のまま）" />
           <div class="alert-warn mt-2">
-            ここに入力した値は <code class="code">config/accounts.json</code> に平文で保存され、
-            公開リポジトリでは誰でも閲覧できます。通常は空のままにしてください。
+            🔒 入力した値は<strong>このブラウザの中で暗号化されてから</strong>送信され、
+            GitHub Secrets にのみ保存されます。
+            <code class="code">config/accounts.json</code> には書き込まれないため、
+            公開リポジトリでも他人に見られることはありません。
           </div>
         </div>
+
         <div>
-          <label class="label" for="acc-user-id">ThreadsユーザーID</label>
+          <label class="label" for="acc-user-id">ThreadsユーザーID（任意）</label>
           <input id="acc-user-id" class="input font-mono" placeholder="空なら自動取得" />
+          <p class="hint">公開情報のため accounts.json に保存されます。</p>
         </div>
       </fieldset>
 
@@ -230,7 +245,7 @@
       </div>
 
       <div class="flex gap-2 pt-2">
-        <button type="submit" class="btn-primary flex-1">保存してコミット</button>
+        <button type="submit" class="btn-primary flex-1">保存する</button>
         <button type="button" id="account-cancel" class="btn-ghost">キャンセル</button>
       </div>
     </form>

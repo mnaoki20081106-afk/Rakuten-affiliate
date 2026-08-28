@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from src import config as cfg
-from src.config import Account, apply_secret_bundle, load_accounts, load_settings
+from src.config import Account, load_accounts, load_settings
 from src.publisher import load_history
 from src.scheduler import parse_iso, to_jst
 from src.storage import write_json
@@ -212,6 +212,11 @@ def run(
             continue
 
         try:
+            if not account.resolve_token() and not dry_run:
+                raise RuntimeError(
+                    f"Threads トークンが未設定です。GitHub Secrets に "
+                    f"{account.token_secret_name} を登録してください"
+                )
             client = ThreadsClient(
                 access_token=account.resolve_token(),
                 user_id=account.threads_user_id,
@@ -287,9 +292,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    applied = apply_secret_bundle()
-    if applied:
-        logger.info("ALL_SECRETS から %s 件のトークンを読み込みました", applied)
     summary = run(
         now_utc=parse_iso(args.now) if args.now else None,
         data_dir=Path(args.data_dir),

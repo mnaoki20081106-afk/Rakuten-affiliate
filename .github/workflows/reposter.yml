@@ -1,6 +1,8 @@
+# このファイルは src/batch_generator.py によって自動生成されます。手動で編集しないでください。
 # 【再投稿機能】毎週 月・水・金 の JST 19:30 (UTC 10:30) に起動する。
 # 過去 1 週間でいいね数が高かった上位 3 件を、月=1 位 / 水=2 位 / 金=3 位 の順に
 # その日の「8 件目の投稿」として再投稿する。
+# 生成日時 (UTC): (バッチ未実行)
 name: Reposter
 
 on:
@@ -31,27 +33,21 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-
       - name: Install dependencies
         run: pip install -r requirements.txt
-
       - name: Repost top posts
         env:
           PYTHONUNBUFFERED: "1"
-          # アカウント数が可変のため、THREADS_TOKEN_* をまとめて受け渡す。
-          # src/config.py の apply_secret_bundle() が環境変数へ展開する。
-          ALL_SECRETS: ${{ toJSON(secrets) }}
+          # トークンはリポジトリに保存せず、実行時に GitHub Secrets から注入する
         run: |
           ARGS=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ -n "${{ inputs.rank_index }}" ]; then ARGS="$ARGS --rank-index ${{ inputs.rank_index }}"; fi
           python -m src.reposter $ARGS
-
       - name: Commit & push state
         run: 'bash scripts/commit_and_push.sh "chore: repost top posts"'

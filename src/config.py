@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import re
 import unicodedata
@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from src.storage import read_json, write_json
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = ROOT / "config"
@@ -31,8 +33,15 @@ POST_PROMPT_FILE = PROMPT_DIR / "Claude×アフィリエイト投稿作成プロ
 ENV_RAKUTEN_APP_ID = "RAKUTEN_APP_ID"
 ENV_RAKUTEN_AFFILIATE_ID = "RAKUTEN_AFFILIATE_ID"
 ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
-# GitHub Actions から toJSON(secrets) をまとめて受け取るための環境変数
-ENV_SECRET_BUNDLE = "ALL_SECRETS"
+
+# 各アカウントの Threads トークンを入れる GitHub Secrets 名の接頭辞
+THREADS_TOKEN_PREFIX = "THREADS_TOKEN_"
+
+# accounts.json に入っていてはいけないキー（過去バージョンからの移行検出用）
+FORBIDDEN_ACCOUNT_KEYS = frozenset(
+    {"threads_access_token", "access_token", "token", "api_key", "anthropic_api_key",
+     "rakuten_app_id", "secret", "password"}
+)
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "timezone": "Asia/Tokyo",
@@ -70,39 +79,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "pr_text": "※PR",
 }
-
-
-def apply_secret_bundle(
-    env: dict[str, str] | None = None, prefixes: tuple[str, ...] = ("THREADS_TOKEN_",)
-) -> int:
-    """``ALL_SECRETS``（GitHub Actions の ``toJSON(secrets)``）を環境変数へ展開する。
-
-    アカウント数が可変で静的な YAML に個々のシークレット名を書けないため、
-    まとめて受け取り ``THREADS_TOKEN_*`` だけを取り込む。既存の環境変数は上書きしない。
-    戻り値は取り込んだ件数（値はログに出さない）。
-    """
-    env = os.environ if env is None else env
-    raw = env.get(ENV_SECRET_BUNDLE, "")
-    if not raw:
-        return 0
-    try:
-        bundle = json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return 0
-    if not isinstance(bundle, dict):
-        return 0
-
-    applied = 0
-    for name, value in bundle.items():
-        if not isinstance(value, str) or not value:
-            continue
-        if not any(name.startswith(prefix) for prefix in prefixes):
-            continue
-        if env.get(name):
-            continue
-        env[name] = value
-        applied += 1
-    return applied
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -145,10 +121,8 @@ class Account:
     tone: str = "親しみやすい丁寧な口調"
     target: str = ""
     search_keywords: list[str] = field(default_factory=list)
-    # Threads API
+    # Threads のユーザー ID（公開情報。アクセストークンはここには持たせない）
     threads_user_id: str = ""
-    threads_access_token: str = ""
-    threads_token_env: str = ""
     # 投稿設定
     posts_per_day: int = 7
     rakuten_affiliate_id: str = ""
@@ -182,23 +156,24 @@ class Account:
         return [self.genre] if self.genre else []
 
     # -- 認証情報 -----------------------------------------------------
+    # アクセストークンは accounts.json に保存しない。
+    # 公開リポジトリを前提とするため、GitHub Actions Secrets にのみ保存し、
+    # 実行時に「THREADS_TOKEN_<アカウントID大文字>」という環境変数として受け取る。
     @property
-    def default_token_env(self) -> str:
-        return f"THREADS_TOKEN_{slugify(self.id).upper()}"
+    def token_secret_name(self) -> str:
+        return f"{THREADS_TOKEN_PREFIX}{slugify(self.id).upper()}"
 
     def resolve_token(self, env: dict[str, str] | None = None) -> str:
-        """アクセストークンを解決する。
-
-        優先順位は 環境変数(threads_token_env) → 環境変数(既定名) → accounts.json の平文。
-        公開リポジトリでは環境変数（GitHub Secrets）の利用を推奨。
-        """
+        """Secrets 由来の環境変数からアクセストークンを取得する。"""
         env = os.environ if env is None else env
-        for name in (self.threads_token_env, self.default_token_env):
-            if name and env.get(name):
-                return env[name].strip()
-        return (self.threads_access_token or "").strip()
+        return (env.get(self.token_secret_name) or "").strip()
 
     def resolve_affiliate_id(self, env: dict[str, str] | None = None) -> str:
+        """楽天アフィリエイト ID を返す。
+
+        アフィリエイト ID は投稿するリンクに必ず現れる公開情報のため、
+        非機密データとして accounts.json に保持することを許容している。
+        """
         env = os.environ if env is None else env
         return (self.rakuten_affiliate_id or env.get(ENV_RAKUTEN_AFFILIATE_ID, "")).strip()
 
@@ -212,8 +187,39 @@ class Account:
         return cls(**{k: v for k, v in (data or {}).items() if k in known})
 
 
+def find_secret_fields(path: str | Path = ACCOUNTS_FILE) -> list[str]:
+    """``accounts.json`` に機密情報が混入していないか調べる。
+
+    このリポジトリは公開前提のため、トークン類がファイルに書かれていたら
+    「値が既に漏れている」ものとして扱い、呼び出し側で警告する。
+    戻り値は ``"アカウントID.キー名"`` のリスト（値そのものは返さない）。
+    """
+    raw = read_json(path, {}) or {}
+    items = raw if isinstance(raw, list) else raw.get("accounts", [])
+    found: list[str] = []
+    for index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        account_id = item.get("id") or f"#{index + 1}"
+        for key, value in item.items():
+            if key.lower() in FORBIDDEN_ACCOUNT_KEYS and str(value or "").strip():
+                found.append(f"{account_id}.{key}")
+    return found
+
+
 def load_accounts(path: str | Path = ACCOUNTS_FILE) -> list[Account]:
-    """``config/accounts.json`` を読み込む。"""
+    """``config/accounts.json`` を読み込む。
+
+    未知のキー（旧バージョンのトークン欄など）は ``Account`` へ取り込まれず破棄される。
+    """
+    leaked = find_secret_fields(path)
+    if leaked:
+        logger.warning(
+            "accounts.json に機密情報らしき項目があります: %s / "
+            "公開リポジトリでは既に漏洩している可能性があります。"
+            "該当のトークンを失効させ、GitHub Secrets へ登録し直してください。",
+            ", ".join(leaked),
+        )
     raw = read_json(path, {"accounts": []}) or {}
     if isinstance(raw, list):  # 旧形式（配列のみ）にも対応
         items = raw

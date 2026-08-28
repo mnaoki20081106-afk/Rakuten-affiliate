@@ -29,7 +29,7 @@ from src.scheduler import (
     to_utc,
 )
 from src.storage import read_json, write_json
-from src.workflow_generator import generate_publisher_workflows
+from src.workflow_generator import generate_publisher_workflows, generate_reposter_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -445,9 +445,9 @@ class BatchGenerator:
 
         if write_workflows:
             publisher_cfg = self.settings.get("publisher", {})
-            secret_names = sorted(
-                {a.threads_token_env or a.default_token_env for a in accounts if a}
-            )
+            python_version = str(publisher_cfg.get("python_version", "3.11"))
+            # シークレット名はアカウント ID から動的に決まるため、
+            # 実行するワークフロー側の参照もアカウント一覧から作り直す
             workflow_result = generate_publisher_workflows(
                 schedule_times=[
                     parse_iso(post["scheduled_at_utc"])
@@ -455,11 +455,17 @@ class BatchGenerator:
                     for post in entry["posts"]
                 ],
                 workflow_dir=self.workflow_dir,
+                accounts=accounts,
                 basename=publisher_cfg.get("workflow_basename", "publisher"),
                 max_cron_per_file=int(publisher_cfg.get("max_cron_per_file", 60)),
-                python_version=str(publisher_cfg.get("python_version", "3.11")),
-                secret_names=secret_names,
+                python_version=python_version,
                 target_date=target_date.isoformat(),
+                generated_at=queue["generated_at"],
+            )
+            workflow_result["reposter"] = generate_reposter_workflow(
+                accounts=accounts,
+                workflow_dir=self.workflow_dir,
+                python_version=python_version,
                 generated_at=queue["generated_at"],
             )
             summary["workflows"] = workflow_result

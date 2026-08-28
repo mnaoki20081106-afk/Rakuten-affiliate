@@ -1,12 +1,18 @@
 /*
  * SNS自動運用 管理画面（GitHub Pages / Vanilla JS）
  *
- * GitHub Pages は静的ホスティングのため Python を実行できない。
- * そこで GitHub REST API (Contents API) を fetch で直接叩き、
- * リポジトリ内の JSON / テキストファイルを読み書きする。
+ * 【設計方針】
+ * このリポジトリは公開（Public）前提のテンプレートである。
+ * したがって機密情報（Threadsトークン・APIキー）は、リポジトリ内のファイルへ
+ * 一切保存しない。管理画面で入力された機密情報は、その場でブラウザ内において
+ * libsodium の sealed box でリポジトリの公開鍵により暗号化し、
+ * GitHub Actions Secrets API へ直接送信する。平文はネットワークにもJSONにも残らない。
+ *
+ * 非機密のメタデータ（テーマ・キーワード等）だけを Contents API 経由で
+ * config/accounts.json へコミットする。
  *
  * 認証は利用者が入力した Personal Access Token を localStorage に保存して使う。
- * トークンをこのソースへ直書きしてはならない（公開リポジトリのため）。
+ * トークンをこのソースへ直書きしてはならない。
  */
 
 "use strict";
@@ -16,6 +22,7 @@
 // ======================================================================
 const STORAGE_KEY = "sns-admin-auth";
 const API_ROOT = "https://api.github.com";
+const THREADS_TOKEN_PREFIX = "THREADS_TOKEN_";
 
 const PATHS = {
   accounts: "config/accounts.json",
@@ -26,6 +33,48 @@ const PATHS = {
   runLog: "data/run_log.json",
   prompt: "prompts/Claude×アフィリエイト投稿作成プロンプト.txt",
 };
+
+/** 全アカウント共通で必要になるシークレット。管理画面から登録できる。 */
+const GLOBAL_SECRETS = [
+  {
+    name: "ANTHROPIC_API_KEY",
+    label: "Claude APIキー",
+    required: true,
+    help: "投稿文と「ターゲットの悩み」の生成に使います。",
+    link: "https://console.anthropic.com/",
+    linkLabel: "Anthropic Console",
+    placeholder: "sk-ant-...",
+  },
+  {
+    name: "RAKUTEN_APP_ID",
+    label: "楽天アプリID",
+    required: true,
+    help: "楽天市場の商品検索に使います。",
+    link: "https://webservice.rakuten.co.jp/",
+    linkLabel: "楽天ウェブサービス",
+    placeholder: "10000000000000000000",
+  },
+  {
+    name: "RAKUTEN_AFFILIATE_ID",
+    label: "楽天アフィリエイトID",
+    required: true,
+    help: "投稿に貼るアフィリエイトリンクの生成に使います。",
+    link: "https://affiliate.rakuten.co.jp/",
+    linkLabel: "楽天アフィリエイト",
+    placeholder: "0123abcd.4567efgh...",
+  },
+  {
+    name: "WORKFLOW_TOKEN",
+    label: "GitHub PAT（workflow権限つき）",
+    required: true,
+    help:
+      "翌日分の配信スケジュール（ワークフローファイル）を書き換えるために必要です。" +
+      "repo と workflow の両方にチェックを入れて発行したトークンを登録してください。",
+    link: "https://github.com/settings/tokens/new?scopes=repo,workflow&description=sns-workflow",
+    linkLabel: "この設定でトークンを作る",
+    placeholder: "ghp_...",
+  },
+];
 
 // src/config.py の DEFAULT_SETTINGS と対応させる
 const DEFAULT_SETTINGS = {
@@ -46,11 +95,16 @@ const DEFAULT_SETTINGS = {
   pr_text: "※PR",
 };
 
+/**
+ * config/accounts.json に保存する項目（すべて非機密）。
+ * src/config.py の Account dataclass と 1 対 1 で対応させること。
+ * ここに機密情報のフィールドを追加してはならない。
+ */
 const ACCOUNT_DEFAULTS = {
   id: "", name: "", enabled: true,
   genre: "", worldview: "", strength: "", tone: "", target: "",
   search_keywords: [],
-  threads_user_id: "", threads_access_token: "", threads_token_env: "",
+  threads_user_id: "",
   posts_per_day: 7, rakuten_affiliate_id: "", note: "",
 };
 
@@ -60,7 +114,7 @@ const STATUS_LABEL = { pending: "予約中", sent: "送信済み", failed: "失�
 // 状態
 // ======================================================================
 const state = {
-  auth: null,          // { token, owner, repo, branch }
+  auth: null,            // { token, owner, repo, branch }
   accounts: [],
   settings: {},
   queue: {},
@@ -68,7 +122,10 @@ const state = {
   used: { accounts: {} },
   runLog: {},
   prompt: "",
-  shas: {},            // パスごとの blob SHA（上書きコミットに必要）
+  secrets: new Map(),    // 登録済みシークレット名 → { updated_at }
+  secretsReadable: true, // 一覧を取得できたか（権限不足なら false）
+  publicKey: null,       // { key_id, key }
+  shas: {},
   view: "dashboard",
 };
 
@@ -93,9 +150,9 @@ function slugify(text) {
     .toLowerCase();
 }
 
-/** アカウントIDから既定のシークレット名を求める（Account.default_token_env と同じ）。 */
-function defaultTokenEnv(accountId) {
-  return `THREADS_TOKEN_${slugify(accountId).toUpperCase()}`;
+/** アカウントIDからシークレット名を求める（Account.token_secret_name と同じ規則）。 */
+function tokenSecretName(accountId) {
+  return `${THREADS_TOKEN_PREFIX}${slugify(accountId).toUpperCase()}`;
 }
 
 function toast(message, type = "info") {
@@ -107,10 +164,9 @@ function toast(message, type = "info") {
     node.style.transition = "opacity .3s";
     node.style.opacity = "0";
     setTimeout(() => node.remove(), 300);
-  }, type === "error" ? 6000 : 3000);
+  }, type === "error" ? 7000 : 3500);
 }
 
-/** ISO文字列を「MM/DD HH:MM」形式へ。JSTのオフセット付き文字列はそのまま解釈される。 */
 function formatDateTime(iso, withDate = true) {
   if (!iso) return "-";
   const date = new Date(iso);
@@ -171,12 +227,16 @@ function clearAuth() {
 }
 
 // ======================================================================
-// GitHub REST API
+// GitHub REST API（共通）
 // ======================================================================
-function contentsUrl(path) {
+function repoUrl(suffix = "") {
   const { owner, repo } = state.auth;
+  return `${API_ROOT}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}${suffix}`;
+}
+
+function contentsUrl(path) {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
-  return `${API_ROOT}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encoded}`;
+  return repoUrl(`/contents/${encoded}`);
 }
 
 async function ghFetch(url, options = {}) {
@@ -201,8 +261,7 @@ async function ghFetch(url, options = {}) {
   }
 
   if (!response.ok) {
-    const detail = payload?.message || `HTTP ${response.status}`;
-    const error = new Error(detail);
+    const error = new Error(payload?.message || `HTTP ${response.status}`);
     error.status = response.status;
     error.payload = payload;
     throw error;
@@ -210,7 +269,7 @@ async function ghFetch(url, options = {}) {
   return payload;
 }
 
-/** ファイルを取得する。存在しなければ null を返す。 */
+// ---- ファイル（Contents API） ----------------------------------------
 async function getFile(path) {
   const url = `${contentsUrl(path)}?ref=${encodeURIComponent(state.auth.branch)}&t=${Date.now()}`;
   try {
@@ -239,11 +298,7 @@ async function getJson(path, fallback) {
 
 /** ファイルを上書きコミットする。SHAが古い場合は取り直して1度だけ再試行する。 */
 async function putFile(path, text, message) {
-  const body = {
-    message,
-    content: encodeBase64(text),
-    branch: state.auth.branch,
-  };
+  const body = { message, content: encodeBase64(text), branch: state.auth.branch };
   if (state.shas[path]) body.sha = state.shas[path];
 
   try {
@@ -251,7 +306,7 @@ async function putFile(path, text, message) {
     state.shas[path] = payload.content.sha;
     return payload;
   } catch (error) {
-    // 409/422 は他の場所（GitHub Actions など）から更新されSHAがずれた場合
+    // 409/422 は GitHub Actions などから同時に更新されSHAがずれた場合
     if (error.status === 409 || error.status === 422) {
       await getFile(path);
       body.sha = state.shas[path] || undefined;
@@ -269,12 +324,90 @@ function putJson(path, data, message) {
 }
 
 // ======================================================================
+// GitHub Actions Secrets（暗号化して保存）
+// ======================================================================
+/** libsodium の準備を待つ。読み込めていなければ分かりやすい例外を投げる。 */
+async function ensureSodium() {
+  if (typeof window.sodium === "undefined") {
+    throw new Error(
+      "暗号化ライブラリ(libsodium)を読み込めませんでした。ページを再読み込みしてください。"
+    );
+  }
+  await window.sodium.ready;
+  return window.sodium;
+}
+
+/** リポジトリの公開鍵を取得する（1セッション1回だけ）。 */
+async function getPublicKey() {
+  if (!state.publicKey) {
+    state.publicKey = await ghFetch(repoUrl("/actions/secrets/public-key"));
+  }
+  return state.publicKey;
+}
+
+/**
+ * 値をリポジトリの公開鍵で暗号化する（GitHubが要求する sealed box 方式）。
+ * 復号できるのはGitHubだけで、暗号文からは元の値を復元できない。
+ */
+async function encryptSecretValue(value, publicKeyBase64) {
+  const sodium = await ensureSodium();
+  const key = sodium.from_base64(publicKeyBase64, sodium.base64_variants.ORIGINAL);
+  const sealed = sodium.crypto_box_seal(sodium.from_string(value), key);
+  return sodium.to_base64(sealed, sodium.base64_variants.ORIGINAL);
+}
+
+/** 登録済みシークレットの一覧（名前と更新日時のみ。値は取得できない）。 */
+async function loadSecrets() {
+  try {
+    const payload = await ghFetch(repoUrl("/actions/secrets?per_page=100"));
+    state.secrets = new Map((payload.secrets || []).map((s) => [s.name, s]));
+    state.secretsReadable = true;
+  } catch (error) {
+    state.secrets = new Map();
+    state.secretsReadable = false;
+    if (error.status !== 403 && error.status !== 404) throw error;
+  }
+}
+
+/** シークレットを暗号化して保存（新規作成・上書きの両方）。 */
+async function putSecret(name, value) {
+  const publicKey = await getPublicKey();
+  const encrypted = await encryptSecretValue(value, publicKey.key);
+  await ghFetch(repoUrl(`/actions/secrets/${encodeURIComponent(name)}`), {
+    method: "PUT",
+    body: JSON.stringify({ encrypted_value: encrypted, key_id: publicKey.key_id }),
+  });
+  state.secrets.set(name, { name, updated_at: new Date().toISOString() });
+}
+
+async function deleteSecret(name) {
+  try {
+    await ghFetch(repoUrl(`/actions/secrets/${encodeURIComponent(name)}`), { method: "DELETE" });
+  } catch (error) {
+    if (error.status !== 404) throw error;
+  }
+  state.secrets.delete(name);
+}
+
+function secretStatus(name) {
+  if (!state.secretsReadable) return { known: false, registered: false };
+  const entry = state.secrets.get(name);
+  return { known: true, registered: Boolean(entry), updatedAt: entry?.updated_at };
+}
+
+function secretBadge(name) {
+  const status = secretStatus(name);
+  if (!status.known) return '<span class="badge badge-pending">状態不明</span>';
+  if (!status.registered) return '<span class="badge badge-expired">未登録</span>';
+  return `<span class="badge badge-sent">登録済み</span>
+    <span class="text-xs text-muted">${escapeHtml(formatDateTime(status.updatedAt))} 更新</span>`;
+}
+
+// ======================================================================
 // ログイン
 // ======================================================================
 function guessRepoFromUrl() {
-  // https://<owner>.github.io/<repo>/ の形式からリポジトリを推測する
-  const host = location.hostname;
-  const match = host.match(/^([^.]+)\.github\.io$/i);
+  const match = location.hostname.match(/^([^.]+)\.github\.io$/i);
   if (!match) return null;
   const segment = location.pathname.split("/").filter(Boolean)[0];
   return { owner: match[1], repo: segment || `${match[1]}.github.io` };
@@ -351,10 +484,11 @@ async function reloadAll() {
       getJson(PATHS.used, { accounts: {} }),
       getJson(PATHS.runLog, {}),
       getFile(PATHS.prompt),
+      loadSecrets(),
     ]);
 
     const list = Array.isArray(accountsRaw) ? accountsRaw : (accountsRaw.accounts || []);
-    state.accounts = list.map((account) => ({ ...ACCOUNT_DEFAULTS, ...account }));
+    state.accounts = list.map((account) => sanitizeAccount(account));
     state.settings = mergeDeep(DEFAULT_SETTINGS, settingsRaw || {});
     state.queue = queue || {};
     state.history = history?.posts ? history : { posts: [] };
@@ -369,6 +503,18 @@ async function reloadAll() {
   }
 }
 
+/**
+ * 既知の非機密フィールドだけを取り込む。
+ * 旧バージョンのファイルにトークン欄が残っていても、ここで確実に落とす。
+ */
+function sanitizeAccount(raw) {
+  const account = { ...ACCOUNT_DEFAULTS };
+  for (const key of Object.keys(ACCOUNT_DEFAULTS)) {
+    if (raw && raw[key] !== undefined) account[key] = raw[key];
+  }
+  return account;
+}
+
 function mergeDeep(base, override) {
   const result = { ...base };
   for (const [key, value] of Object.entries(override || {})) {
@@ -380,12 +526,8 @@ function mergeDeep(base, override) {
   return result;
 }
 
-// ======================================================================
-// 保存
-// ======================================================================
 async function saveAccounts(message) {
   await putJson(PATHS.accounts, { accounts: state.accounts }, message);
-  toast("保存してGitHubへコミットしました", "success");
 }
 
 // ======================================================================
@@ -400,10 +542,14 @@ function render() {
   if (!target) return;
   target.classList.remove("hidden");
 
-  if (state.view === "dashboard") renderDashboard(target);
-  else if (state.view === "accounts") renderAccounts(target);
-  else if (state.view === "settings") renderSettings(target);
-  else if (state.view === "prompt") renderPrompt(target);
+  const renderers = {
+    dashboard: renderDashboard,
+    accounts: renderAccounts,
+    secrets: renderSecrets,
+    settings: renderSettings,
+    prompt: renderPrompt,
+  };
+  (renderers[state.view] || renderDashboard)(target);
 }
 
 // ======================================================================
@@ -420,6 +566,61 @@ function statCard(value, label) {
   return `<div class="card p-4">
     <div class="stat-value">${escapeHtml(value)}</div>
     <div class="stat-label">${escapeHtml(label)}</div>
+  </div>`;
+}
+
+/** セットアップの進み具合を示すチェックリスト（初心者向けの道しるべ）。 */
+function renderSetupChecklist() {
+  const missingGlobal = GLOBAL_SECRETS.filter(
+    (secret) => secret.required && !secretStatus(secret.name).registered
+  );
+  const accountsWithoutToken = state.accounts.filter(
+    (account) => account.enabled && !secretStatus(tokenSecretName(account.id)).registered
+  );
+
+  const steps = [
+    {
+      done: state.accounts.length > 0,
+      label: "アカウントを登録する",
+      hint: "「アカウント管理」タブから追加します",
+    },
+    {
+      done: state.secretsReadable && missingGlobal.length === 0,
+      label: "APIキーを登録する",
+      hint: state.secretsReadable
+        ? `未登録: ${missingGlobal.map((s) => s.label).join(" / ") || "なし"}`
+        : "トークンの権限が足りず状態を確認できません",
+    },
+    {
+      done: state.secretsReadable && state.accounts.length > 0 && accountsWithoutToken.length === 0,
+      label: "各アカウントのThreadsトークンを登録する",
+      hint: accountsWithoutToken.length
+        ? `未登録: ${accountsWithoutToken.map((a) => a.name || a.id).join(" / ")}`
+        : "すべて登録済みです",
+    },
+    {
+      done: Boolean(state.runLog?.generated_at),
+      label: "バッチを1回実行する",
+      hint: "GitHubの Actions タブ →「Batch Generator」→ Run workflow",
+    },
+  ];
+
+  if (steps.every((step) => step.done)) return "";
+
+  return `<div class="card p-4">
+    <h2 class="font-bold mb-1">セットアップの進み具合</h2>
+    <p class="text-xs text-muted mb-3">すべて緑になれば自動運用が始まります。</p>
+    <ol class="space-y-2">
+      ${steps.map((step, index) => `<li class="flex items-start gap-3 text-sm">
+        <span class="badge ${step.done ? "badge-sent" : "badge-pending"} shrink-0">
+          ${step.done ? "✓" : index + 1}
+        </span>
+        <span class="min-w-0">
+          <span class="${step.done ? "text-muted" : "font-medium"}">${escapeHtml(step.label)}</span>
+          <span class="block text-xs text-muted">${escapeHtml(step.hint)}</span>
+        </span>
+      </li>`).join("")}
+    </ol>
   </div>`;
 }
 
@@ -443,6 +644,7 @@ function renderDashboard(root) {
 
   root.innerHTML = `
     ${banner}
+    ${renderSetupChecklist()}
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
       ${statCard(state.accounts.filter((a) => a.enabled).length, "有効なアカウント")}
       ${statCard(posts.length, `予約投稿（${state.queue?.target_date || "未生成"}）`)}
@@ -480,8 +682,7 @@ function renderDashboard(root) {
 }
 
 function renderQueueSection() {
-  const accounts = state.queue?.accounts || {};
-  const entries = Object.entries(accounts);
+  const entries = Object.entries(state.queue?.accounts || {});
   if (!entries.length) {
     return `<p class="text-sm text-muted">キューが空です。GitHub Actions の <code class="code">Batch Generator</code> を実行すると翌日分が生成されます。</p>`;
   }
@@ -565,22 +766,111 @@ function renderUsedItems() {
 }
 
 // ======================================================================
+// APIキー（GitHub Secrets）
+// ======================================================================
+function renderSecrets(root) {
+  const permissionNote = state.secretsReadable
+    ? ""
+    : `<div class="alert-warn">
+         登録済みシークレットの一覧を取得できませんでした。トークンに <code class="code">repo</code> 権限
+         （fine-grained なら <code class="code">Secrets: Read and write</code>）があるか確認してください。
+         保存自体は試せますが、登録状況は表示できません。
+       </div>`;
+
+  const cards = GLOBAL_SECRETS.map((secret) => `
+    <div class="card p-4 space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="min-w-0">
+          <h3 class="font-bold">${escapeHtml(secret.label)}</h3>
+          <code class="code">${escapeHtml(secret.name)}</code>
+        </div>
+        <div class="flex items-center gap-2">${secretBadge(secret.name)}</div>
+      </div>
+      <p class="text-sm text-muted">${escapeHtml(secret.help)}</p>
+      <p class="text-xs">
+        取得先:
+        <a class="underline" href="${escapeHtml(secret.link)}" target="_blank" rel="noopener">
+          ${escapeHtml(secret.linkLabel)}
+        </a>
+      </p>
+      <div class="flex flex-col sm:flex-row gap-2">
+        <input type="password" class="input font-mono flex-1" autocomplete="off"
+               data-secret-input="${escapeHtml(secret.name)}"
+               placeholder="${escapeHtml(secret.placeholder)}" />
+        <button class="btn-primary shrink-0" data-secret-save="${escapeHtml(secret.name)}">
+          暗号化して保存
+        </button>
+      </div>
+    </div>`).join("");
+
+  root.innerHTML = `
+    <div>
+      <h2 class="font-bold">APIキー（GitHub Secrets）</h2>
+      <p class="text-xs text-muted">
+        入力した値はこのブラウザの中で暗号化されてから送信され、GitHub Secrets に保存されます。
+        リポジトリのファイルには一切書き込まれません。
+      </p>
+    </div>
+    ${permissionNote}
+    <div class="alert-warn">
+      一度保存した値は GitHub 側でも読み出せません（表示できるのは名前と更新日時だけです）。
+      変更したいときは新しい値を入力して上書き保存してください。
+    </div>
+    ${cards}
+    <div class="card p-4">
+      <h3 class="font-bold text-sm mb-2">各アカウントのThreadsトークン</h3>
+      <p class="text-xs text-muted mb-3">
+        アカウントごとのトークンは「アカウント管理」タブの各アカウントの編集画面から登録します。
+      </p>
+      ${state.accounts.length ? `<div class="table-wrap"><table class="data">
+        <thead><tr><th>アカウント</th><th>シークレット名</th><th>状態</th></tr></thead>
+        <tbody>${state.accounts.map((account) => `<tr>
+          <td>${escapeHtml(account.name || account.id)}</td>
+          <td><code class="code">${escapeHtml(tokenSecretName(account.id))}</code></td>
+          <td>${secretBadge(tokenSecretName(account.id))}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>` : '<p class="text-sm text-muted">アカウントが未登録です。</p>'}
+    </div>
+  `;
+
+  root.querySelectorAll("[data-secret-save]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const name = button.dataset.secretSave;
+      const input = root.querySelector(`[data-secret-input="${name}"]`);
+      const value = input.value.trim();
+      if (!value) {
+        toast("値を入力してください", "error");
+        return;
+      }
+      button.disabled = true;
+      button.textContent = "保存中...";
+      try {
+        await putSecret(name, value);
+        input.value = "";  // 平文を画面に残さない
+        toast(`${name} を暗号化して保存しました`, "success");
+        render();
+      } catch (error) {
+        toast(`保存に失敗しました: ${error.message}`, "error");
+      } finally {
+        button.disabled = false;
+        button.textContent = "暗号化して保存";
+      }
+    });
+  });
+}
+
+// ======================================================================
 // アカウント管理
 // ======================================================================
 function renderAccounts(root) {
   const cards = state.accounts.map((account, index) => {
-    const secretName = account.threads_token_env || defaultTokenEnv(account.id);
-    const tokenWarning = account.threads_access_token
-      ? '<span class="badge badge-expired">平文トークン</span>'
-      : "";
-
+    const secretName = tokenSecretName(account.id);
     return `<div class="card p-4 space-y-3">
       <div class="flex items-start gap-3">
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2">
             <h3 class="font-bold truncate">${escapeHtml(account.name || account.id)}</h3>
             <span class="badge ${account.enabled ? "badge-on" : "badge-off"}">${account.enabled ? "有効" : "無効"}</span>
-            ${tokenWarning}
           </div>
           <p class="text-xs text-muted font-mono">${escapeHtml(account.id)}</p>
         </div>
@@ -596,37 +886,30 @@ function renderAccounts(root) {
         <div><dt class="stat-label">強み</dt><dd>${escapeHtml(account.strength || "-")}</dd></div>
       </dl>
 
-      <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
         <span>1日 ${escapeHtml(account.posts_per_day)} 投稿</span>
         <span>キーワード: ${escapeHtml((account.search_keywords || []).join(" / ") || account.genre || "-")}</span>
-        <span>Secret: <code class="code">${escapeHtml(secretName)}</code></span>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-xs">
+        <span class="text-muted">Threadsトークン:</span>
+        ${secretBadge(secretName)}
+        <code class="code">${escapeHtml(secretName)}</code>
       </div>
     </div>`;
   }).join("");
-
-  const secretList = state.accounts
-    .map((a) => `${a.threads_token_env || defaultTokenEnv(a.id)}  # ${a.name || a.id}`)
-    .join("\n");
 
   root.innerHTML = `
     <div class="flex items-center justify-between gap-3">
       <div>
         <h2 class="font-bold">アカウント管理</h2>
-        <p class="text-xs text-muted">テーマ（発信ジャンル＋世界観＋強み）とThreadsトークンを登録します。</p>
+        <p class="text-xs text-muted">
+          テーマは <code class="code">config/accounts.json</code> に、トークンは暗号化して GitHub Secrets に保存されます。
+        </p>
       </div>
       <button id="add-account" class="btn-primary shrink-0">＋ 追加</button>
     </div>
 
     ${cards || '<div class="card p-8 text-center text-muted text-sm">アカウントがまだ登録されていません。「＋ 追加」から登録してください。</div>'}
-
-    <div class="card p-4">
-      <h3 class="font-bold text-sm mb-1">GitHub Secretsに登録するトークン名</h3>
-      <p class="text-xs text-muted mb-2">
-        公開リポジトリのため、Threadsトークンは <code class="code">Settings → Secrets and variables → Actions</code> に
-        以下の名前で登録してください。
-      </p>
-      <pre class="post-body text-xs">${escapeHtml(secretList || "（アカウント未登録）")}</pre>
-    </div>
   `;
 
   $("#add-account")?.addEventListener("click", () => openAccountModal(-1));
@@ -642,12 +925,25 @@ function renderAccounts(root) {
 async function deleteAccount(index) {
   const account = state.accounts[index];
   if (!account) return;
-  if (!confirm(`アカウント「${account.name || account.id}」を削除します。よろしいですか？`)) return;
+  const secretName = tokenSecretName(account.id);
+  const hasSecret = secretStatus(secretName).registered;
+  const message = hasSecret
+    ? `アカウント「${account.name || account.id}」を削除します。\n登録済みのシークレット ${secretName} も削除します。よろしいですか？`
+    : `アカウント「${account.name || account.id}」を削除します。よろしいですか？`;
+  if (!confirm(message)) return;
 
   const backup = [...state.accounts];
   state.accounts.splice(index, 1);
   try {
     await saveAccounts(`chore(accounts): remove ${account.id}`);
+    if (hasSecret) {
+      try {
+        await deleteSecret(secretName);
+      } catch (error) {
+        toast(`シークレットの削除に失敗しました（手動で削除してください）: ${error.message}`, "error");
+      }
+    }
+    toast("削除しました", "success");
     render();
   } catch (error) {
     state.accounts = backup;
@@ -661,6 +957,7 @@ function openAccountModal(index) {
 
   $("#account-modal-title").textContent = isNew ? "アカウントを追加" : "アカウントを編集";
   $("#acc-index").value = String(index);
+  $("#acc-original-id").value = isNew ? "" : account.id;
   $("#acc-name").value = account.name || "";
   $("#acc-id").value = account.id || "";
   $("#acc-genre").value = account.genre || "";
@@ -671,11 +968,10 @@ function openAccountModal(index) {
   $("#acc-keywords").value = (account.search_keywords || []).join("\n");
   $("#acc-posts").value = account.posts_per_day || 7;
   $("#acc-affiliate").value = account.rakuten_affiliate_id || "";
-  $("#acc-token-env").value = account.threads_token_env || "";
-  $("#acc-token").value = account.threads_access_token || "";
   $("#acc-user-id").value = account.threads_user_id || "";
   $("#acc-note").value = account.note || "";
   $("#acc-enabled").checked = account.enabled !== false;
+  $("#acc-token").value = "";
 
   updateSecretPreview();
   $("#account-modal").classList.remove("hidden");
@@ -683,21 +979,31 @@ function openAccountModal(index) {
 }
 
 function closeAccountModal() {
+  $("#acc-token").value = "";  // 平文をDOMに残さない
   $("#account-modal").classList.add("hidden");
   document.body.style.overflow = "";
 }
 
 function updateSecretPreview() {
-  const explicit = $("#acc-token-env").value.trim();
   const id = $("#acc-id").value.trim();
-  $("#acc-secret-name").textContent = explicit || (id ? defaultTokenEnv(id) : "アカウントIDを入力してください");
+  const name = id ? tokenSecretName(id) : "";
+  $("#acc-secret-name").textContent = name || "アカウントIDを入力してください";
+
+  const statusBox = $("#acc-secret-status");
+  if (!name) {
+    statusBox.innerHTML = "";
+    return;
+  }
+  const status = secretStatus(name);
+  statusBox.innerHTML = status.registered
+    ? `${secretBadge(name)} <span class="text-xs text-muted">変更する場合のみ入力してください</span>`
+    : `${secretBadge(name)} <span class="text-xs text-muted">投稿するにはトークンの登録が必要です</span>`;
 }
 
 function setupAccountModal() {
   $("#account-modal-close").addEventListener("click", closeAccountModal);
   $("#account-cancel").addEventListener("click", closeAccountModal);
   $("#acc-id").addEventListener("input", updateSecretPreview);
-  $("#acc-token-env").addEventListener("input", updateSecretPreview);
   $("#account-modal").addEventListener("click", (event) => {
     if (event.target === $("#account-modal")) closeAccountModal();
   });
@@ -706,16 +1012,32 @@ function setupAccountModal() {
     event.preventDefault();
     const index = Number($("#acc-index").value);
     const isNew = index < 0;
+    const originalId = $("#acc-original-id").value;
 
     const id = slugify($("#acc-id").value);
     if (!id) {
       toast("アカウントIDには半角英数字を含めてください", "error");
       return;
     }
-    const duplicated = state.accounts.some((a, i) => a.id === id && i !== index);
-    if (duplicated) {
+    if (state.accounts.some((a, i) => a.id === id && i !== index)) {
       toast(`アカウントIDが重複しています: ${id}`, "error");
       return;
+    }
+
+    const token = $("#acc-token").value.trim();
+    const secretName = tokenSecretName(id);
+
+    // IDを変えるとシークレット名も変わるが、既存の値は読み出せないため引き継げない
+    if (!isNew && originalId && originalId !== id && !token) {
+      const oldName = tokenSecretName(originalId);
+      if (secretStatus(oldName).registered) {
+        toast(
+          `アカウントIDを変更するとシークレット名が ${secretName} に変わります。` +
+          "トークンを入力し直してください。",
+          "error"
+        );
+        return;
+      }
     }
 
     const account = {
@@ -731,22 +1053,26 @@ function setupAccountModal() {
       search_keywords: $("#acc-keywords").value
         .split(/[\n,、]+/).map((k) => k.trim()).filter(Boolean),
       threads_user_id: $("#acc-user-id").value.trim(),
-      threads_access_token: $("#acc-token").value.trim(),
-      threads_token_env: $("#acc-token-env").value.trim(),
       posts_per_day: Number($("#acc-posts").value) || 7,
       rakuten_affiliate_id: $("#acc-affiliate").value.trim(),
       note: $("#acc-note").value.trim(),
     };
 
-    const backup = [...state.accounts];
-    if (isNew) state.accounts.push(account);
-    else state.accounts[index] = account;
-
     const button = $("#account-form button[type=submit]");
     button.disabled = true;
-    button.textContent = "保存中...";
+    const backup = [...state.accounts];
     try {
+      // トークンを先に保存する。失敗した場合はメタデータもコミットしない。
+      if (token) {
+        button.textContent = "トークンを暗号化中...";
+        await putSecret(secretName, token);
+      }
+      button.textContent = "保存中...";
+      if (isNew) state.accounts.push(account);
+      else state.accounts[index] = account;
       await saveAccounts(`chore(accounts): ${isNew ? "add" : "update"} ${id}`);
+
+      toast(token ? "保存し、トークンを暗号化して登録しました" : "保存しました", "success");
       closeAccountModal();
       render();
     } catch (error) {
@@ -754,7 +1080,7 @@ function setupAccountModal() {
       toast(`保存に失敗しました: ${error.message}`, "error");
     } finally {
       button.disabled = false;
-      button.textContent = "保存してコミット";
+      button.textContent = "保存する";
     }
   });
 }
@@ -873,9 +1199,7 @@ function renderPrompt(root) {
     <div class="card p-4 space-y-4">
       <div>
         <h2 class="font-bold">投稿生成プロンプト</h2>
-        <p class="text-xs text-muted">
-          <code class="code">${escapeHtml(PATHS.prompt)}</code> を編集します。
-        </p>
+        <p class="text-xs text-muted"><code class="code">${escapeHtml(PATHS.prompt)}</code> を編集します。</p>
       </div>
 
       <div class="alert-warn">
@@ -940,6 +1264,10 @@ async function main() {
   // Tailwind CDN が読み込めなかった場合はフォールバックCSSへ切り替える
   if (!window.tailwind) {
     document.documentElement.classList.add("no-tailwind");
+  }
+  // 暗号化ライブラリはリポジトリに同梱しているが、念のため状態を見ておく
+  if (typeof window.sodium === "undefined") {
+    $("#sodium-error")?.classList.remove("hidden");
   }
 
   setupLogin();
