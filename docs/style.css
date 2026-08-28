@@ -1,0 +1,226 @@
+/* 管理画面の共通パーツ。
+   Tailwind Play CDN は外部CSSの @apply を処理しないため、ここは素のCSSで書いている。
+   レイアウトはHTML側のTailwindユーティリティ、繰り返し使う部品はこのファイルが担当する。 */
+
+:root {
+  --surface: #ffffff;
+  --surface-alt: #f8fafc;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --accent: #4f46e5;
+  --accent-hover: #6366f1;
+  --accent-active: #4338ca;
+  --accent-text: #4f46e5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #0f172a;
+    --surface-alt: #1e293b;
+    --border: #1e293b;
+    --border-strong: #334155;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --accent: #4f46e5;
+    --accent-hover: #6366f1;
+    --accent-active: #4338ca;
+    --accent-text: #a5b4fc;
+  }
+}
+
+code.code {
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.05);
+}
+
+.text-muted { color: var(--text-muted); }
+
+.label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.25rem;
+}
+
+.hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+.input {
+  width: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.input:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.btn-primary,
+.btn-ghost,
+.btn-danger {
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+  border: none;
+}
+
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-primary:active:not(:disabled) { background: var(--accent-active); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-ghost { background: transparent; color: var(--text-muted); font-weight: 500; padding: 0.5rem 0.75rem; }
+.btn-ghost:hover { background: var(--surface-alt); color: var(--text); }
+
+.btn-danger { background: transparent; color: #e11d48; font-weight: 500; padding: 0.5rem 0.75rem; }
+.btn-danger:hover { background: rgb(225 29 72 / 0.1); }
+
+.tab {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent-text); border-bottom-color: var(--accent); }
+
+.alert-error,
+.alert-warn {
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.alert-error { background: rgb(225 29 72 / 0.1); border: 1px solid rgb(225 29 72 / 0.3); color: #be123c; }
+.alert-warn  { background: rgb(245 158 11 / 0.12); border: 1px solid rgb(245 158 11 / 0.35); color: #b45309; }
+@media (prefers-color-scheme: dark) {
+  .alert-error { color: #fda4af; }
+  .alert-warn  { color: #fcd34d; }
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.badge-pending { background: rgb(100 116 139 / 0.18); color: var(--text-muted); }
+.badge-sent    { background: rgb(16 185 129 / 0.15); color: #047857; }
+.badge-failed  { background: rgb(225 29 72 / 0.15);  color: #be123c; }
+.badge-expired { background: rgb(245 158 11 / 0.18); color: #b45309; }
+.badge-golden  { background: rgb(234 179 8 / 0.2);   color: #a16207; }
+.badge-on      { background: rgb(79 70 229 / 0.15);  color: var(--accent-text); }
+.badge-off     { background: rgb(100 116 139 / 0.18); color: var(--text-muted); }
+@media (prefers-color-scheme: dark) {
+  .badge-sent    { color: #6ee7b7; }
+  .badge-failed  { color: #fda4af; }
+  .badge-expired { color: #fcd34d; }
+  .badge-golden  { color: #fde047; }
+}
+
+.post-body {
+  white-space: pre-wrap;
+  font-size: 0.875rem;
+  line-height: 1.7;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+
+.toast {
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: #fff;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.2);
+}
+.toast-success { background: #059669; }
+.toast-error   { background: #e11d48; }
+.toast-info    { background: #334155; }
+
+.table-wrap { overflow-x: auto; }
+table.data { min-width: 100%; font-size: 0.875rem; border-collapse: collapse; }
+table.data th {
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+table.data td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.stat-value { font-size: 1.75rem; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 0.75rem; color: var(--text-muted); }
+
+details.account-queue > summary { cursor: pointer; list-style: none; }
+details.account-queue > summary::-webkit-details-marker { display: none; }
+details.account-queue > summary::before { content: "▸ "; color: var(--text-muted); }
+details.account-queue[open] > summary::before { content: "▾ "; }
+
+/* ------------------------------------------------------------------
+   Tailwind CDN が読み込めなかった場合の最低限のフォールバック。
+
+   .hidden は「ログイン画面／本体／モーダル」の出し分けに使っているため、
+   これが効かないと全画面が同時に表示されてしまう。ここだけは無条件に定義する。
+   ------------------------------------------------------------------ */
+.hidden { display: none !important; }
+
+/* CDN の読み込みに失敗したときだけ app.js が html に付与するクラス。
+   Tailwind のレイアウトユーティリティが無くても読める程度に整える。 */
+.no-tailwind body { margin: 0; background: var(--surface-alt); color: var(--text); }
+.no-tailwind header,
+.no-tailwind main,
+.no-tailwind footer { max-width: 64rem; margin: 0 auto; padding: 0.75rem 1rem; }
+.no-tailwind .card { padding: 1rem; margin-bottom: 1rem; }
+.no-tailwind #login-screen { max-width: 32rem; margin: 2rem auto; padding: 1rem; }
+.no-tailwind #account-modal {
+  position: fixed; inset: 0; overflow-y: auto;
+  background: rgb(15 23 42 / 0.6); padding: 1rem;
+}
+.no-tailwind #account-modal .card { max-width: 42rem; margin: 2rem auto; }
+.no-tailwind form > div,
+.no-tailwind fieldset > div { margin-bottom: 0.75rem; }
+.no-tailwind #tabs { display: flex; gap: 0.25rem; overflow-x: auto; }

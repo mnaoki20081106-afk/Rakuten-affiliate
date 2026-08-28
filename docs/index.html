@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ja" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>SNS自動運用 管理画面</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // CDNが読み込めなかった場合でもページが壊れないようガードする
+    // （style.css は素のCSSなので、Tailwindが無くても操作は可能）
+    if (window.tailwind) tailwind.config = {
+      darkMode: "media",
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['-apple-system', 'BlinkMacSystemFont', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
+                   'Noto Sans JP', 'Meiryo', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="h-full bg-slate-100 text-slate-800 dark:bg-slate-950 dark:text-slate-100 font-sans">
+
+<!-- ================= ログイン画面 ================= -->
+<div id="login-screen" class="min-h-full flex items-center justify-center p-4">
+  <div class="w-full max-w-lg card p-6 sm:p-8">
+    <div class="text-center mb-6">
+      <div class="text-5xl mb-3">🤖</div>
+      <h1 class="text-xl font-bold">SNS自動運用 管理画面</h1>
+      <p class="text-sm text-muted mt-2">
+        GitHubのPersonal Access Tokenでリポジトリに接続します。<br />
+        トークンはこのブラウザの中だけに保存され、外部には送信されません。
+      </p>
+    </div>
+
+    <form id="login-form" class="space-y-4">
+      <div>
+        <label class="label" for="login-token">Personal Access Token <span class="text-rose-500">*</span></label>
+        <input id="login-token" type="password" class="input font-mono" placeholder="ghp_... または github_pat_..."
+               autocomplete="off" required />
+        <p class="hint">
+          classic トークンなら <code class="code">repo</code> 権限、
+          fine-grained なら <code class="code">Contents: Read and write</code> が必要です。
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="label" for="login-owner">オーナー名 <span class="text-rose-500">*</span></label>
+          <input id="login-owner" type="text" class="input" placeholder="mnaoki20081106-afk" required />
+        </div>
+        <div>
+          <label class="label" for="login-repo">リポジトリ名 <span class="text-rose-500">*</span></label>
+          <input id="login-repo" type="text" class="input" placeholder="Rakuten-affiliate" required />
+        </div>
+      </div>
+
+      <div>
+        <label class="label" for="login-branch">ブランチ</label>
+        <input id="login-branch" type="text" class="input" value="main" />
+        <p class="hint">通常は <code class="code">main</code> のままで構いません。</p>
+      </div>
+
+      <div id="login-error" class="hidden alert-error"></div>
+
+      <label class="flex items-start gap-2 text-sm text-muted">
+        <input id="login-remember" type="checkbox" class="mt-1" checked />
+        <span>このブラウザにトークンを保存する（共用端末ではチェックを外してください）</span>
+      </label>
+
+      <button type="submit" id="login-submit" class="btn-primary w-full">接続する</button>
+    </form>
+
+    <details class="mt-6 text-sm text-muted">
+      <summary class="cursor-pointer font-medium">トークンの取り方</summary>
+      <ol class="list-decimal list-inside mt-2 space-y-1">
+        <li>GitHubの <code class="code">Settings → Developer settings → Personal access tokens</code> を開く</li>
+        <li><code class="code">Tokens (classic)</code> → <code class="code">Generate new token (classic)</code></li>
+        <li>スコープの <code class="code">repo</code> にチェックを入れて発行</li>
+        <li>表示された <code class="code">ghp_...</code> をコピーして上に貼り付ける</li>
+      </ol>
+    </details>
+  </div>
+</div>
+
+<!-- ================= 管理画面本体 ================= -->
+<div id="app" class="hidden min-h-full flex flex-col">
+
+  <header class="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-30">
+    <div class="mx-auto max-w-6xl px-4 py-3 flex items-center gap-3">
+      <span class="text-2xl">🤖</span>
+      <div class="min-w-0 flex-1">
+        <h1 class="font-bold leading-tight truncate">SNS自動運用 管理画面</h1>
+        <p id="repo-label" class="text-xs text-muted truncate font-mono"></p>
+      </div>
+      <button id="reload-btn" class="btn-ghost" title="最新の状態を読み込む">再読込</button>
+      <button id="logout-btn" class="btn-ghost" title="トークンを削除して切断する">切断</button>
+    </div>
+
+    <nav class="mx-auto max-w-6xl px-4 flex gap-1 overflow-x-auto" id="tabs">
+      <button class="tab" data-view="dashboard">ダッシュボード</button>
+      <button class="tab" data-view="accounts">アカウント管理</button>
+      <button class="tab" data-view="settings">共通設定</button>
+      <button class="tab" data-view="prompt">プロンプト</button>
+    </nav>
+  </header>
+
+  <main class="mx-auto w-full max-w-6xl flex-1 p-4 space-y-4">
+    <div id="loading" class="card p-8 text-center text-muted">読み込み中...</div>
+
+    <section id="view-dashboard" class="view hidden space-y-4"></section>
+    <section id="view-accounts" class="view hidden space-y-4"></section>
+    <section id="view-settings" class="view hidden space-y-4"></section>
+    <section id="view-prompt" class="view hidden space-y-4"></section>
+  </main>
+
+  <footer class="mx-auto w-full max-w-6xl px-4 py-6 text-xs text-muted">
+    このページはGitHub Pages上の静的サイトです。データはGitHub REST API経由でリポジトリへ直接コミットされます。
+  </footer>
+</div>
+
+<!-- ================= アカウント編集モーダル ================= -->
+<div id="account-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 p-4 overflow-y-auto">
+  <div class="mx-auto max-w-2xl card my-8">
+    <div class="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 rounded-t-xl">
+      <h2 id="account-modal-title" class="font-bold">アカウントを追加</h2>
+      <button id="account-modal-close" class="btn-ghost" aria-label="閉じる">✕</button>
+    </div>
+
+    <form id="account-form" class="p-4 space-y-4">
+      <input type="hidden" id="acc-index" />
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="label" for="acc-name">アカウント名 <span class="text-rose-500">*</span></label>
+          <input id="acc-name" class="input" placeholder="コスメ研究ノート" required />
+        </div>
+        <div>
+          <label class="label" for="acc-id">アカウントID <span class="text-rose-500">*</span></label>
+          <input id="acc-id" class="input font-mono" placeholder="beauty_lab" required />
+          <p class="hint">半角英数字と <code class="code">_</code> のみ。シークレット名の元になります。</p>
+        </div>
+      </div>
+
+      <div class="rounded-lg bg-slate-50 dark:bg-slate-800/60 p-3 text-sm">
+        <div class="text-muted mb-1">登録すべきGitHub Secret名</div>
+        <code id="acc-secret-name" class="code block break-all">-</code>
+      </div>
+
+      <fieldset class="space-y-4 border-t border-slate-200 dark:border-slate-800 pt-4">
+        <legend class="font-semibold text-sm">テーマ（発信ジャンル＋世界観＋強み）</legend>
+        <div>
+          <label class="label" for="acc-genre">発信ジャンル <span class="text-rose-500">*</span></label>
+          <input id="acc-genre" class="input" placeholder="プチプラコスメ・スキンケア" required />
+        </div>
+        <div>
+          <label class="label" for="acc-worldview">世界観</label>
+          <textarea id="acc-worldview" class="input" rows="2" placeholder="深夜の洗面所でひとりごとを言うような等身大のトーン"></textarea>
+        </div>
+        <div>
+          <label class="label" for="acc-strength">強み</label>
+          <textarea id="acc-strength" class="input" rows="2" placeholder="全部自腹で試して正直に書く。合わなかったものも書く"></textarea>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="label" for="acc-target">ターゲット</label>
+            <input id="acc-target" class="input" placeholder="20代後半〜30代前半の会社員" />
+          </div>
+          <div>
+            <label class="label" for="acc-tone">口調</label>
+            <input id="acc-tone" class="input" placeholder="親しみやすい丁寧語" />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="space-y-4 border-t border-slate-200 dark:border-slate-800 pt-4">
+        <legend class="font-semibold text-sm">リサーチ設定</legend>
+        <div>
+          <label class="label" for="acc-keywords">楽天検索キーワード</label>
+          <textarea id="acc-keywords" class="input" rows="3" placeholder="プチプラ スキンケア&#10;毛穴 化粧水&#10;保湿 クリーム"></textarea>
+          <p class="hint">1行に1つ。空の場合は発信ジャンルがそのまま使われます。</p>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="label" for="acc-posts">1日の投稿数</label>
+            <input id="acc-posts" type="number" min="1" max="20" class="input" value="7" />
+          </div>
+          <div>
+            <label class="label" for="acc-affiliate">楽天アフィリエイトID</label>
+            <input id="acc-affiliate" class="input" placeholder="空なら共通設定を使用" />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="space-y-4 border-t border-slate-200 dark:border-slate-800 pt-4">
+        <legend class="font-semibold text-sm">Threads API</legend>
+        <div>
+          <label class="label" for="acc-token-env">トークンの環境変数名（推奨）</label>
+          <input id="acc-token-env" class="input font-mono" placeholder="空ならIDから自動決定" />
+          <p class="hint">GitHub Secretsの名前。公開リポジトリではこちらを使ってください。</p>
+        </div>
+        <div>
+          <label class="label" for="acc-token">アクセストークンを直接保存（非推奨）</label>
+          <input id="acc-token" type="password" class="input font-mono" autocomplete="off" />
+          <div class="alert-warn mt-2">
+            ここに入力した値は <code class="code">config/accounts.json</code> に平文で保存され、
+            公開リポジトリでは誰でも閲覧できます。通常は空のままにしてください。
+          </div>
+        </div>
+        <div>
+          <label class="label" for="acc-user-id">ThreadsユーザーID</label>
+          <input id="acc-user-id" class="input font-mono" placeholder="空なら自動取得" />
+        </div>
+      </fieldset>
+
+      <div class="border-t border-slate-200 dark:border-slate-800 pt-4 space-y-4">
+        <div>
+          <label class="label" for="acc-note">メモ</label>
+          <textarea id="acc-note" class="input" rows="2"></textarea>
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input id="acc-enabled" type="checkbox" checked />
+          <span>このアカウントを有効にする（無効にすると投稿生成の対象外になります）</span>
+        </label>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button type="submit" class="btn-primary flex-1">保存してコミット</button>
+        <button type="button" id="account-cancel" class="btn-ghost">キャンセル</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-area" class="fixed bottom-4 right-4 z-[60] space-y-2 w-[min(24rem,calc(100vw-2rem))]"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
