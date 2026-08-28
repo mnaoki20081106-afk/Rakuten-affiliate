@@ -1,0 +1,21 @@
+{
+  "accounts": [
+    {
+      "id": "beauty_lab",
+      "name": "コスメ研究ノート",
+      "enabled": true,
+      "genre": "プチプラコスメ・スキンケア",
+      "worldview": "深夜の洗面所でひとりごとを言うような、等身大のトーン",
+      "strength": "全部自腹で試して正直に書く。合わなかったものも書く",
+      "tone": "親しみやすい丁寧語。時々ぽつりと本音がこぼれる",
+      "target": "20代後半〜30代前半、肌荒れと出費のバランスに悩む会社員",
+      "search_keywords": ["プチプラ スキンケア", "毛穴 化粧水", "保湿 クリーム"],
+      "threads_user_id": "",
+      "threads_access_token": "",
+      "threads_token_env": "THREADS_TOKEN_BEAUTY_LAB",
+      "posts_per_day": 7,
+      "rakuten_affiliate_id": "",
+      "note": "トークンは GitHub Secrets に登録し、threads_token_env で参照する"
+    }
+  ]
+}
