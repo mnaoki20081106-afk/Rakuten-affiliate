@@ -1,0 +1,57 @@
+# 【再投稿機能】毎週 月・水・金 の JST 19:30 (UTC 10:30) に起動する。
+# 過去 1 週間でいいね数が高かった上位 3 件を、月=1 位 / 水=2 位 / 金=3 位 の順に
+# その日の「8 件目の投稿」として再投稿する。
+name: Reposter
+
+on:
+  schedule:
+    - cron: "30 10 * * 1,3,5"  # JST 月・水・金 19:30
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Threads API を呼ばずに動作確認する"
+        type: boolean
+        default: false
+      rank_index:
+        description: "使用する順位 (0 始まり, 空なら曜日から自動判定)"
+        type: string
+        default: ""
+
+concurrency:
+  group: reposter
+  cancel-in-progress: false
+
+jobs:
+  repost:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Repost top posts
+        env:
+          PYTHONUNBUFFERED: "1"
+          # アカウント数が可変のため、THREADS_TOKEN_* をまとめて受け渡す。
+          # src/config.py の apply_secret_bundle() が環境変数へ展開する。
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.rank_index }}" ]; then ARGS="$ARGS --rank-index ${{ inputs.rank_index }}"; fi
+          python -m src.reposter $ARGS
+
+      - name: Commit & push state
+        run: 'bash scripts/commit_and_push.sh "chore: repost top posts"'

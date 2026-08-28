@@ -1,0 +1,70 @@
+# 単体テストと、外部 API を呼ばないスモークテストを実行する。
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: python -m pytest tests -q
+
+      - name: Validate workflow YAML
+        run: |
+          python - <<'PY'
+          import glob, yaml
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              with open(path, encoding="utf-8") as f:
+                  yaml.safe_load(f)
+              print("ok", path)
+          PY
+
+      - name: Smoke test (dry-run batch → publish → repost)
+        run: |
+          set -e
+          mkdir -p /tmp/smoke/data /tmp/smoke/wf
+          python - <<'PY'
+          import json
+          accounts = {"accounts": [
+              {"id": f"smoke{i}", "name": f"スモーク{i}", "genre": f"ジャンル{i}",
+               "worldview": "世界観", "strength": "強み", "tone": "丁寧語",
+               "search_keywords": [f"kw{i}"], "threads_access_token": "dummy"}
+              for i in range(1, 11)
+          ]}
+          json.dump(accounts, open("/tmp/smoke/accounts.json", "w", encoding="utf-8"), ensure_ascii=False)
+          for name, value in [("queue.json", {}), ("used_items.json", {"accounts": {}}),
+                              ("post_history.json", {"posts": []})]:
+              json.dump(value, open(f"/tmp/smoke/data/{name}", "w", encoding="utf-8"))
+          PY
+          python -m src.batch_generator --dry-run --seed 1 \
+            --accounts-file /tmp/smoke/accounts.json \
+            --data-dir /tmp/smoke/data --workflow-dir /tmp/smoke/wf --log-level WARNING
+          python - <<'PY'
+          import json
+          summary = json.load(open("/tmp/smoke/data/run_log.json", encoding="utf-8"))
+          assert summary["total_posts"] == 70, summary["total_posts"]
+          assert not summary["errors"], summary["errors"]
+          print("生成:", summary["total_posts"], "件 /", summary["workflows"])
+          queue = json.load(open("/tmp/smoke/data/queue.json", encoding="utf-8"))
+          first = next(iter(queue["accounts"].values()))["posts"][0]
+          open("/tmp/smoke/now.txt", "w").write(first["scheduled_at_utc"])
+          PY
+          python -m src.publisher --dry-run --now "$(cat /tmp/smoke/now.txt)" \
+            --data-dir /tmp/smoke/data --accounts-file /tmp/smoke/accounts.json --log-level WARNING
+          python -m src.reposter --dry-run --skip-insights \
+            --data-dir /tmp/smoke/data --accounts-file /tmp/smoke/accounts.json --log-level WARNING

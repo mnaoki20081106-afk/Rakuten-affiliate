@@ -1,0 +1,49 @@
+{
+  "timezone": "Asia/Tokyo",
+  "posts_per_day": 7,
+  "active_hours": {
+    "start": "07:00",
+    "end": "23:00"
+  },
+  "jitter_minutes": {
+    "min": 15,
+    "max": 30
+  },
+  "golden_time_ranges": [
+    ["07:00", "09:00"],
+    ["20:00", "23:00"]
+  ],
+  "min_gap_minutes": 20,
+  "duplicate_exclusion_days": 14,
+  "rakuten": {
+    "fetch_hits": 50,
+    "sort": "-reviewCount",
+    "min_price": 0,
+    "max_price": 0,
+    "ng_keywords": []
+  },
+  "claude": {
+    "model": "claude-3-5-sonnet-latest",
+    "max_tokens": 2000,
+    "temperature": 1.0,
+    "worry_max_tokens": 400
+  },
+  "publisher": {
+    "max_cron_per_file": 60,
+    "window_before_minutes": 5,
+    "window_after_minutes": 60,
+    "workflow_basename": "publisher",
+    "python_version": "3.11"
+  },
+  "repost": {
+    "lookback_days": 7,
+    "top_n": 3,
+    "cooldown_days": 14,
+    "weekday_rank_map": {
+      "0": 0,
+      "2": 1,
+      "4": 2
+    }
+  },
+  "pr_text": "※PR"
+}

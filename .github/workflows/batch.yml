@@ -1,0 +1,72 @@
+# 【前日バッチ処理】毎日 JST 23:00 (UTC 14:00) に 1 回だけ起動する。
+# 全アカウントを 1 件ずつ順番に処理し、翌日分の投稿キューと配信用ワークフローを生成する。
+name: Batch Generator
+
+on:
+  schedule:
+    - cron: "0 14 * * *"  # JST 23:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "外部 API を呼ばずスタブデータで実行する"
+        type: boolean
+        default: false
+      target_date:
+        description: "対象日 (YYYY-MM-DD, 空なら翌日)"
+        type: string
+        default: ""
+
+concurrency:
+  group: batch-generator
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 配信用ワークフロー YAML を書き換えてプッシュするため、
+          # workflow スコープを持つ PAT (WORKFLOW_TOKEN) が必要。
+          token: ${{ secrets.WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Check WORKFLOW_TOKEN
+        run: |
+          if [ -z "${{ secrets.WORKFLOW_TOKEN }}" ]; then
+            echo "::warning::WORKFLOW_TOKEN が未設定です。GITHUB_TOKEN では .github/workflows/ の変更をプッシュできません。"
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate tomorrow's queue and publisher workflows
+        env:
+          PYTHONUNBUFFERED: "1"
+          RAKUTEN_APP_ID: ${{ secrets.RAKUTEN_APP_ID }}
+          RAKUTEN_AFFILIATE_ID: ${{ secrets.RAKUTEN_AFFILIATE_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "${{ inputs.target_date }}" ]; then ARGS="$ARGS --target-date ${{ inputs.target_date }}"; fi
+          python -m src.batch_generator $ARGS
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch-run-log
+          path: data/run_log.json
+          if-no-files-found: ignore
+
+      - name: Commit & push state
+        run: 'bash scripts/commit_and_push.sh "chore: generate queue and publisher workflows"'
