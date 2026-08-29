@@ -82,7 +82,9 @@ def test_案内用のタブは増やさない():
 
 def test_開発モードでの運用手順が案内されている():
     # 最初は開発モードのままで運用できることと、テスター追加が必要なことを明示する
-    assert "テスターに追加" in JS
+    assert "Threadsテスターの追加/削除" in JS       # Metaの画面にある実際の項目名
+    assert "ウェブサイトのアクセス許可" in JS        # スマホ側での承認手順
+    assert "Pending" in JS                           # 追加直後の状態
     assert "開発モード" in JS
     assert "自分のアカウントを運用するだけなら、開発モードのままで問題ありません" in JS
     # ライブモードにするには審査が要ることも書く
@@ -105,3 +107,36 @@ def test_審査に備えた文書ページが用意されている():
 def test_リダイレクトURLはディレクトリに正規化される():
     # Meta は完全一致で照合するため、index.html の有無で揺れてはいけない
     assert 'location.pathname.replace(/[^/]*$/, "")' in JS
+
+
+def test_Threads連携の手順が実際の画面の項目名で書かれている():
+    """Metaの画面に実在する項目名で案内していること。
+
+    以前は記憶に頼って書いたためクリック経路が実際と一致せず、
+    手順どおりに進めない状態だった。実際の項目名で固定しておく。
+    """
+    for label in (
+        "Threads APIの使用",              # アプリ作成時のユースケース
+        "Threads API の設定画面（Settings）",
+        "コールバックURL（Redirect URI）",
+        "アプリID（Client ID）",
+        "アプリシークレット（Client Secret）",
+        "Threadsテスターの追加/削除",
+        "ウェブサイトのアクセス許可",      # スマホ側での承認場所
+    ):
+        assert label in JS, f"「{label}」の案内がありません"
+
+
+def test_連携の準備は1画面ずつ進むウィザードになっている():
+    # 似た横文字が同時に並ぶと迷うため、1画面に1つの作業だけを出す
+    assert "const SETUP_STEPS = [" in JS
+    keys = re.findall(r'key: "(\w+)"', JS[JS.index("const SETUP_STEPS = ["):])
+    assert keys[:7] == ["create", "callback", "appid", "appsecret", "tester", "approve", "done"], keys[:7]
+    assert "renderWizard" in JS and "wiz-next" in JS and "wiz-prev" in JS
+
+
+def test_手順の本文列は幅いっぱいに広がる():
+    # 行ごとに幅が変わると左右がちぐはぐに見えるため
+    css = (DOCS / "style.css").read_text(encoding="utf-8")
+    assert ".steps li > :last-child" in css
+    assert "flex: 1 1 auto" in css
