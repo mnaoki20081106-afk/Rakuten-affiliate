@@ -31,7 +31,7 @@
   "claude": {
     "model": "claude-3-5-sonnet-latest",
     "max_tokens": 2000,
-    "temperature": 1.0,
+    "temperature": 1,
     "worry_max_tokens": 400
   },
   "publisher": {
@@ -40,6 +40,9 @@
     "window_after_minutes": 60,
     "workflow_basename": "publisher",
     "python_version": "3.11"
+  },
+  "threads": {
+    "app_id": ""
   },
   "repost": {
     "lookback_days": 7,
@@ -51,8 +54,5 @@
       "4": 2
     }
   },
-  "pr_text": "※PR",
-  "threads": {
-    "app_id": ""
-  }
+  "pr_text": " PR"
 }
