@@ -123,3 +123,13 @@ class GitHubSecretsClient:
         }
         self._request("PUT", f"/actions/secrets/{name}", json_body=payload)
         logger.info("シークレットを更新しました: %s", name)
+
+    def delete_secret(self, name: str) -> None:
+        """シークレットを削除する（存在しない場合は何もしない）。"""
+        try:
+            self._request("DELETE", f"/actions/secrets/{name}")
+        except GitHubSecretsError as exc:
+            if "404" not in str(exc):
+                raise
+            return
+        logger.info("シークレットを削除しました: %s", name)

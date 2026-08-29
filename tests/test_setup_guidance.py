@@ -35,8 +35,9 @@ def test_APIキーの取得先が4つとも用意されている():
 def test_APIキーごとに取得手順が書かれている():
     # GLOBAL_SECRETS の各項目に steps があること
     block = JS[JS.index("const GLOBAL_SECRETS = [") : JS.index("// src/config.py の DEFAULT_SETTINGS")]
-    assert block.count("name:") == 4
-    assert block.count("steps: [") == 4, "取得手順が無いAPIキーがあります"
+    entries = block.count("name:")
+    assert entries >= 4, entries
+    assert block.count("steps: [") == entries, "取得手順が無いAPIキーがあります"
     assert "取得のしかた" in JS
 
 
@@ -77,3 +78,30 @@ def test_案内用のタブは増やさない():
     # 慣れた利用者の邪魔になるため、手順は各画面の中に置く
     tabs = re.findall(r'data-view="([a-z]+)"', HTML)
     assert tabs == ["dashboard", "accounts", "secrets", "settings", "prompt"], tabs
+
+
+def test_開発モードでの運用手順が案内されている():
+    # 最初は開発モードのままで運用できることと、テスター追加が必要なことを明示する
+    assert "テスターに追加" in JS
+    assert "開発モード" in JS
+    assert "自分のアカウントを運用するだけなら、開発モードのままで問題ありません" in JS
+    # ライブモードにするには審査が要ることも書く
+    assert "アプリレビュー" in JS
+
+
+def test_審査に備えた文書ページが用意されている():
+    for name, heading in (("privacy.html", "プライバシーポリシー"), ("terms.html", "利用規約")):
+        path = DOCS / name
+        assert path.is_file(), f"docs/{name} がありません"
+        text = path.read_text(encoding="utf-8")
+        assert heading in text
+        # 記入が必要なひな形であることを明示しておく
+        assert "ひな形" in text
+        assert "記入" in text
+    # 管理画面から URL を渡せるようにしてある
+    assert "privacy.html" in JS and "terms.html" in JS
+
+
+def test_リダイレクトURLはディレクトリに正規化される():
+    # Meta は完全一致で照合するため、index.html の有無で揺れてはいけない
+    assert 'location.pathname.replace(/[^/]*$/, "")' in JS

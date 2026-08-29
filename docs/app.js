@@ -24,6 +24,28 @@ const STORAGE_KEY = "sns-admin-auth";
 const API_ROOT = "https://api.github.com";
 const THREADS_TOKEN_PREFIX = "THREADS_TOKEN_";
 
+/** Threads の OAuth 連携で使う値 */
+const THREADS_AUTHORIZE_URL = "https://threads.net/oauth/authorize";
+const THREADS_SCOPES = "threads_basic,threads_content_publish,threads_manage_insights";
+const THREADS_APP_SECRET_SECRET = "THREADS_APP_SECRET";
+const THREADS_OAUTH_CODE_SECRET = "THREADS_OAUTH_CODE";
+const CONNECT_WORKFLOW = "threads_connect.yml";
+const OAUTH_STATE_KEY = "sns-admin-oauth";
+
+/**
+ * この管理画面が置かれているディレクトリのURL。
+ * index.html を直接開いた場合でも同じ値になるよう、末尾のファイル名は落とす。
+ * Meta に登録するリダイレクトURLは完全一致で照合されるため、ここが揺れてはいけない。
+ */
+function baseUrl() {
+  return `${location.origin}${location.pathname.replace(/[^/]*$/, "")}`;
+}
+
+/** Meta のアプリに登録するリダイレクトURL。 */
+function redirectUri() {
+  return baseUrl();
+}
+
 /** GitHubのトークン作成画面（必要な権限にチェックが入った状態で開く） */
 const TOKEN_NEW_URL = {
   admin: "https://github.com/settings/tokens/new?scopes=repo&description=sns-admin",
@@ -109,6 +131,19 @@ const GLOBAL_SECRETS = [
     ],
   },
   {
+    name: THREADS_APP_SECRET_SECRET,
+    label: "Threads アプリシークレット",
+    required: true,
+    help: "トークンの発行に使います。GitHub Actions の中だけで使われ、ブラウザには渡りません。",
+    link: "https://developers.facebook.com/",
+    linkLabel: "Meta for Developers",
+    placeholder: "（アプリ設定 → ベーシック の app secret）",
+    steps: [
+      "Meta のアプリ設定 → ベーシック を開く",
+      "「app secret」の「表示」を押して値をコピーする",
+    ],
+  },
+  {
     name: "WORKFLOW_TOKEN",
     label: "GitHub PAT（workflow権限つき）",
     required: true,
@@ -142,6 +177,7 @@ const DEFAULT_SETTINGS = {
     max_cron_per_file: 60, window_before_minutes: 5, window_after_minutes: 60,
     workflow_basename: "publisher", python_version: "3.11",
   },
+  threads: { app_id: "" },
   repost: { lookback_days: 7, top_n: 3, cooldown_days: 14, weekday_rank_map: { 0: 0, 2: 1, 4: 2 } },
   pr_text: "※PR",
 };
@@ -474,6 +510,163 @@ function secretBadge(name) {
   if (!status.registered) return '<span class="badge badge-expired">未登録</span>';
   return `<span class="badge badge-sent">登録済み</span>
     <span class="tiny sub">${escapeHtml(formatDateTime(status.updatedAt))} 更新</span>`;
+}
+
+// ======================================================================
+// Threads との連携（OAuth）
+// ======================================================================
+/** アプリID・アプリシークレットが両方登録されていれば連携できる。 */
+function threadsAppId() {
+  return (state.settings?.threads?.app_id || "").trim();
+}
+
+function canConnectThreads() {
+  return Boolean(threadsAppId()) && secretStatus(THREADS_APP_SECRET_SECRET).registered;
+}
+
+/**
+ * Threads の認可画面へ移動する。
+ * 利用者は Threads 自身のページでログインするため、パスワードはここには渡らない。
+ */
+async function startThreadsConnect(accountId) {
+  if (!canConnectThreads()) {
+    toast("先に「APIキー」タブで Threads アプリID とアプリシークレットを登録してください", "error");
+    return;
+  }
+  // 戻ってきたときに、どのアカウントの連携だったかを判別するための控え
+  const nonce = crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+  try {
+    sessionStorage.setItem(OAUTH_STATE_KEY, JSON.stringify({ nonce, accountId }));
+  } catch {
+    toast("ブラウザの記憶領域を使えないため連携を開始できません", "error");
+    return;
+  }
+
+  const params = new URLSearchParams({
+    client_id: threadsAppId(),
+    redirect_uri: redirectUri(),
+    scope: THREADS_SCOPES,
+    response_type: "code",
+    state: nonce,
+  });
+  location.href = `${THREADS_AUTHORIZE_URL}?${params}`;
+}
+
+/** 連携用ワークフローを起動する。 */
+async function dispatchConnectWorkflow(accountId) {
+  await ghFetch(repoUrl(`/actions/workflows/${CONNECT_WORKFLOW}/dispatches`), {
+    method: "POST",
+    body: JSON.stringify({
+      ref: state.auth.branch,
+      inputs: { account_id: accountId, redirect_uri: redirectUri() },
+    }),
+  });
+}
+
+/** 起動したワークフローの結果を待つ。 */
+async function waitForConnectWorkflow(startedAt, timeoutMs = 180000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+    let runs;
+    try {
+      runs = await ghFetch(repoUrl(`/actions/workflows/${CONNECT_WORKFLOW}/runs?per_page=5`));
+    } catch {
+      continue;  // 一時的な失敗は待って再確認する
+    }
+    const run = (runs.workflow_runs || []).find(
+      (r) => new Date(r.created_at).getTime() >= startedAt - 60000
+    );
+    if (!run) continue;
+    if (run.status === "completed") {
+      return { ok: run.conclusion === "success", url: run.html_url, conclusion: run.conclusion };
+    }
+  }
+  return { ok: false, timedOut: true };
+}
+
+/**
+ * 認可画面から戻ってきたときの処理。
+ * 認可コードは実行ログに残さないため、暗号化して一時シークレットへ入れ、
+ * ワークフロー側で交換・削除させる。
+ */
+async function handleOAuthCallback() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get("code");
+  const returnedState = params.get("state");
+  const error = params.get("error_description") || params.get("error");
+
+  if (!code && !error) return false;
+
+  // URL からコードを消す（履歴や共有で漏れないように）
+  history.replaceState(null, "", redirectUri());
+
+  let saved = null;
+  try {
+    saved = JSON.parse(sessionStorage.getItem(OAUTH_STATE_KEY) || "null");
+  } catch {
+    saved = null;
+  }
+  sessionStorage.removeItem(OAUTH_STATE_KEY);
+
+  if (error) {
+    toast(`Threads との連携が中断されました: ${error}`, "error");
+    return false;
+  }
+  if (!saved || saved.nonce !== returnedState) {
+    toast("連携の照合に失敗しました。お手数ですがもう一度お試しください。", "error");
+    return false;
+  }
+
+  showConnectProgress(saved.accountId, "認可コードを安全に受け渡しています...");
+  try {
+    await putSecret(THREADS_OAUTH_CODE_SECRET, code);
+    showConnectProgress(saved.accountId, "トークンを発行しています...（1〜2分かかります）");
+    const startedAt = Date.now();
+    await dispatchConnectWorkflow(saved.accountId);
+    const result = await waitForConnectWorkflow(startedAt);
+
+    if (result.ok) {
+      showConnectProgress(saved.accountId, "", { done: true });
+      toast("Threads と連携しました", "success");
+    } else if (result.timedOut) {
+      showConnectProgress(saved.accountId, "", { failed: true, message: "時間内に完了しませんでした。Actions の実行結果を確認してください。" });
+    } else {
+      showConnectProgress(saved.accountId, "", { failed: true, message: "連携に失敗しました。Actions の実行ログを確認してください。", url: result.url });
+    }
+  } catch (exc) {
+    showConnectProgress(saved.accountId, "", { failed: true, message: exc.message });
+  }
+  return true;
+}
+
+/** 連携中の状態を画面に出す。 */
+function showConnectProgress(accountId, message, options = {}) {
+  const box = $("#connect-progress");
+  const account = state.accounts.find((a) => a.id === accountId);
+  const name = account ? (account.name || account.id) : accountId;
+  box.classList.remove("hidden");
+
+  if (options.done) {
+    box.innerHTML = `<div class="alert-info">
+      <strong>${escapeHtml(name)} と Threads の連携が完了しました。</strong>
+      トークンは暗号化して保存され、以後は毎週自動で更新されます。
+    </div>`;
+    reloadAll();
+    return;
+  }
+  if (options.failed) {
+    box.innerHTML = `<div class="alert-error">
+      <strong>${escapeHtml(name)} の連携に失敗しました。</strong>
+      ${escapeHtml(options.message || "")}
+      ${options.url ? `<span class="block mt-1">→ ${link(options.url, "実行ログを開く")}</span>` : ""}
+    </div>`;
+    return;
+  }
+  box.innerHTML = `<div class="alert-info">
+    <strong>${escapeHtml(name)} を連携しています。</strong> ${escapeHtml(message)}
+    <span class="block tiny">この画面を閉じずにお待ちください。</span>
+  </div>`;
 }
 
 // ======================================================================
@@ -920,6 +1113,226 @@ function renderUsedItems() {
 // ======================================================================
 // APIキー（GitHub Secrets）
 // ======================================================================
+/**
+ * Threadsアプリの設定カード。
+ * 「アプリを作る → リダイレクトURLを登録 → アプリIDとシークレットを保存」までを
+ * 1つの流れとして見せる。リダイレクトURLはこの画面のURLから自動で決まる。
+ */
+/**
+ * 開発モードとライブモードの違いと、あとで本審査に出すときの準備。
+ * 最初は開発モードのままで運用でき、必要になってから申請すればよい。
+ */
+function renderAppModeGuide() {
+  const origin = baseUrl();
+  return `<details class="mt-3">
+    <summary class="small bold" style="cursor: pointer;">開発モードのままで大丈夫？（ライブモードにする方法）</summary>
+
+    <p class="small mt-2">
+      <strong>自分のアカウントを運用するだけなら、開発モードのままで問題ありません。</strong>
+      ライブモードにするには Meta の本審査が必要ですが、審査を通さなくても
+      テスターに追加したアカウントであれば通常どおり投稿できます。
+    </p>
+
+    <table class="data mt-2">
+      <thead><tr><th></th><th>開発モード（最初はこちら）</th><th>ライブモード</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="bold">連携できるアカウント</td>
+          <td>アプリにテスターとして追加したアカウントのみ</td>
+          <td>制限なし</td>
+        </tr>
+        <tr>
+          <td class="bold">必要な手続き</td>
+          <td>なし（アカウントごとにテスター追加）</td>
+          <td>Meta の本審査（アプリレビュー）</td>
+        </tr>
+        <tr>
+          <td class="bold">向いている場面</td>
+          <td>自分のアカウントを運用する</td>
+          <td>他人にも使ってもらう</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="small mt-3 bold">あとで審査に出すときに必要になるもの</p>
+    <p class="tiny">
+      審査ではプライバシーポリシーと利用規約のURLを求められます。
+      このリポジトリに<strong>ひな形を用意してあります</strong>（運営者名と連絡先の記入が必要です）。
+    </p>
+    <div class="mt-2">
+      <label class="label" for="policy-privacy">プライバシーポリシー</label>
+      <input id="policy-privacy" class="input mono" readonly value="${escapeHtml(origin)}privacy.html" />
+      <p class="tiny mt-1">
+        ${link(`${origin}privacy.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}privacy.html">URLをコピー</button>
+      </p>
+    </div>
+    <div class="mt-2">
+      <label class="label" for="policy-terms">利用規約</label>
+      <input id="policy-terms" class="input mono" readonly value="${escapeHtml(origin)}terms.html" />
+      <p class="tiny mt-1">
+        ${link(`${origin}terms.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}terms.html">URLをコピー</button>
+      </p>
+    </div>
+
+    <p class="tiny mt-3">
+      このほか、審査ではビジネス認証や、実際の利用の様子を撮った動画などを求められる場合があります。
+      要件は変わるため、申請時に Meta の画面の案内を確認してください。
+    </p>
+  </details>`;
+}
+
+
+function renderThreadsAppCard() {
+  const appId = threadsAppId();
+  const secretOk = secretStatus(THREADS_APP_SECRET_SECRET).registered;
+  const ready = canConnectThreads();
+
+  return `<div class="card pad-lg">
+    <div class="between mb-2">
+      <h3 class="h2">Threadsアプリの設定</h3>
+      <span class="badge ${ready ? "badge-sent" : "badge-expired"}">${ready ? "設定済み" : "未設定"}</span>
+    </div>
+    <p class="small sub mb-3">
+      ここを一度だけ設定すると、以降は各アカウントの「Threadsでログイン」ボタンだけで連携できます。
+      アプリは1つ作れば、何アカウントでも使い回せます。
+    </p>
+
+    <ol class="steps">
+      <li>
+        <span class="step-no">1</span>
+        <span class="min-w-0">
+          <span class="bold">Metaでアプリを作る</span>
+          <span class="block tiny">
+            マイアプリ → アプリを作成 →「Threads APIを使用してアクセス」を選びます。
+            続いて Threads API の設定で、次の3つの権限を有効にしてください。
+          </span>
+          <span class="block tiny mt-1">
+            <code class="code">threads_basic</code>
+            <code class="code">threads_content_publish</code>
+            <code class="code">threads_manage_insights</code>
+          </span>
+          <span class="block small mt-1">→ ${link("https://developers.facebook.com/", "Meta for Developers を開く")}</span>
+        </span>
+      </li>
+
+      <li>
+        <span class="step-no">2</span>
+        <span class="min-w-0 full">
+          <span class="bold">リダイレクトURLを登録する</span>
+          <span class="block tiny">
+            Metaのアプリ設定にある「リダイレクトURL（Redirect Callback URLs）」の欄へ、
+            下のURLを<strong>そのまま</strong>貼り付けて保存してください。
+          </span>
+          <span class="block mt-2">
+            <input id="redirect-uri" class="input mono" readonly value="${escapeHtml(redirectUri())}" />
+          </span>
+          <span class="block mt-1">
+            <button type="button" id="copy-redirect" class="btn-ghost btn-sm">URLをコピー</button>
+          </span>
+        </span>
+      </li>
+
+      <li>
+        <span class="step-no ${appId ? "done" : ""}">${appId ? "✓" : "3"}</span>
+        <span class="min-w-0 full">
+          <span class="bold">アプリIDを保存する</span>
+          <span class="block tiny">
+            アプリ設定 → ベーシック にある「アプリID」です。
+            認可URLに必ず現れる公開情報のため、設定ファイルに保存されます。
+          </span>
+          <span class="block mt-2">
+            <input id="threads-app-id" class="input mono" value="${escapeHtml(appId)}"
+                   placeholder="1234567890123456" />
+          </span>
+          <span class="block mt-1">
+            <button type="button" id="save-app-id" class="btn-primary btn-sm">アプリIDを保存</button>
+          </span>
+        </span>
+      </li>
+
+      <li>
+        <span class="step-no ${secretOk ? "done" : ""}">${secretOk ? "✓" : "4"}</span>
+        <span class="min-w-0">
+          <span class="bold">アプリシークレットを保存する</span>
+          <span class="block tiny">
+            同じベーシック画面の「app secret」です。下の一覧にある
+            <code class="code">THREADS_APP_SECRET</code> へ暗号化して保存してください。
+          </span>
+        </span>
+      </li>
+
+      <li>
+        <span class="step-no">5</span>
+        <span class="min-w-0">
+          <span class="bold">運用するアカウントをテスターに追加する</span>
+          <span class="block tiny">
+            作ったばかりのアプリは<strong>開発モード</strong>です。この状態で連携できるのは、
+            アプリに役割を持つアカウントだけなので、運用する各Threadsアカウントを
+            <strong>テスター</strong>として追加し、そのアカウント側で招待を承認してください。
+          </span>
+          <span class="block tiny mt-1">
+            Metaのアプリ設定 → アプリロール → role → テスターを追加
+          </span>
+        </span>
+      </li>
+    </ol>
+
+    ${renderAppModeGuide()}
+
+    ${ready ? `<div class="alert-info mt-3">
+      設定は完了しています。「アカウント管理」タブの各アカウントにある
+      <strong>「Threadsでログイン」</strong>から連携してください。
+    </div>` : ""}
+  </div>`;
+}
+
+/** クリップボードへコピーする。使えない環境では選択状態にして手動コピーを促す。 */
+async function copyText(value, fallbackInput) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("URLをコピーしました", "success");
+  } catch {
+    fallbackInput?.select();
+    toast("URLを選択しました。長押ししてコピーしてください。", "info");
+  }
+}
+
+function setupThreadsAppCard(root) {
+  root.querySelector("#copy-redirect")?.addEventListener("click", () =>
+    copyText(redirectUri(), root.querySelector("#redirect-uri")));
+
+  root.querySelectorAll("[data-copy]").forEach((button) => {
+    button.addEventListener("click", () =>
+      copyText(button.dataset.copy, button.closest("div")?.querySelector("input")));
+  });
+
+  root.querySelector("#save-app-id")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const value = root.querySelector("#threads-app-id").value.trim();
+    if (!/^[0-9]+$/.test(value)) {
+      toast("アプリIDは数字のみです。ベーシック画面の「アプリID」を確認してください。", "error");
+      return;
+    }
+    button.disabled = true;
+    button.textContent = "保存中...";
+    try {
+      const updated = mergeDeep(state.settings, { threads: { app_id: value } });
+      await putJson(PATHS.settings, updated, "chore(settings): set threads app id");
+      state.settings = updated;
+      toast("アプリIDを保存しました", "success");
+      render();
+    } catch (error) {
+      toast(`保存に失敗しました: ${error.message}`, "error");
+    } finally {
+      button.disabled = false;
+      button.textContent = "アプリIDを保存";
+    }
+  });
+}
+
+
 function renderSecrets(root) {
   const permissionNote = state.secretsReadable
     ? ""
@@ -966,6 +1379,7 @@ function renderSecrets(root) {
       </p>
     </div>
     ${permissionNote}
+    ${renderThreadsAppCard()}
     <div class="alert-warn">
       一度保存した値は GitHub 側でも読み出せません（表示できるのは名前と更新日時だけです）。
       変更したいときは新しい値を入力して上書き保存してください。
@@ -989,6 +1403,8 @@ function renderSecrets(root) {
       </table></div>` : '<p class="small sub">アカウントが未登録です。</p>'}
     </div>
   `;
+
+  setupThreadsAppCard(root);
 
   root.querySelectorAll("[data-secret-save]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1053,6 +1469,14 @@ function renderAccounts(root) {
         ${expiryBadge(account.id)}
         <code class="code">${escapeHtml(secretName)}</code>
       </div>
+      <div class="row wrap gap-xs">
+        <button class="btn-primary btn-sm" data-connect="${escapeHtml(account.id)}"
+                ${canConnectThreads() ? "" : "disabled"}>
+          ${secretStatus(secretName).registered ? "Threadsで再連携" : "Threadsでログイン"}
+        </button>
+        ${canConnectThreads() ? "" :
+          `<span class="tiny">先に <a href="#" data-goto="secrets">Threadsアプリの設定</a> を済ませてください</span>`}
+      </div>
     </div>`;
   }).join("");
 
@@ -1071,6 +1495,9 @@ function renderAccounts(root) {
   `;
 
   $("#add-account")?.addEventListener("click", () => openAccountModal(-1));
+  root.querySelectorAll("[data-connect]").forEach((button) => {
+    button.addEventListener("click", () => startThreadsConnect(button.dataset.connect));
+  });
   root.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       const index = Number(button.dataset.index);
@@ -1463,6 +1890,8 @@ async function main() {
   if (saved?.token && saved.owner && saved.repo) {
     try {
       await verifyAndStart({ branch: "main", ...saved });
+      // 認可画面から戻ってきた場合はここで連携を仕上げる
+      await handleOAuthCallback();
       return;
     } catch {
       clearAuth();

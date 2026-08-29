@@ -181,6 +181,87 @@ class ThreadsClient:
         return result
 
 
+# OAuth 連携で要求する権限
+OAUTH_SCOPES = ("threads_basic", "threads_content_publish", "threads_manage_insights")
+AUTHORIZE_URL = "https://threads.net/oauth/authorize"
+
+
+def build_authorize_url(
+    app_id: str, redirect_uri: str, state: str = "", scopes: Iterable[str] = OAUTH_SCOPES
+) -> str:
+    """Threads の認可画面（利用者がログインして「許可」を押す画面）のURLを組み立てる。"""
+    from urllib.parse import urlencode
+
+    params = {
+        "client_id": app_id,
+        "redirect_uri": redirect_uri,
+        "scope": ",".join(scopes),
+        "response_type": "code",
+    }
+    if state:
+        params["state"] = state
+    return f"{AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def exchange_code_for_token(
+    code: str,
+    redirect_uri: str,
+    app_id: str,
+    app_secret: str,
+    session: requests.Session | None = None,
+    timeout: int = 30,
+) -> dict[str, Any]:
+    """認可コードを短命アクセストークンへ交換する。
+
+    このやり取りにはアプリシークレットが必要なため、ブラウザではなく
+    GitHub Actions の中だけで実行する（ブラウザへシークレットを渡さない）。
+    戻り値: ``{"access_token": str, "user_id": str}``
+    """
+    session = session or requests.Session()
+    payload = {
+        "client_id": app_id,
+        "client_secret": app_secret,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+        "code": code,
+    }
+    resp = session.post(f"{GRAPH_ROOT}/oauth/access_token", data=payload, timeout=timeout)
+    if resp.status_code >= 400:
+        raise ThreadsAPIError(f"認可コードの交換に失敗しました HTTP {resp.status_code}: {resp.text[:300]}")
+
+    data = resp.json()
+    token = str(data.get("access_token", ""))
+    if not token:
+        raise ThreadsAPIError(f"アクセストークンを取得できませんでした: {data}")
+    return {"access_token": token, "user_id": str(data.get("user_id", ""))}
+
+
+def exchange_for_long_lived_token(
+    short_lived_token: str,
+    app_secret: str,
+    session: requests.Session | None = None,
+    timeout: int = 30,
+) -> dict[str, Any]:
+    """短命トークンを長寿命（約60日）トークンへ交換する。"""
+    session = session or requests.Session()
+    params = {
+        "grant_type": "th_exchange_token",
+        "client_secret": app_secret,
+        "access_token": short_lived_token,
+    }
+    resp = session.get(f"{GRAPH_ROOT}/access_token", params=params, timeout=timeout)
+    if resp.status_code >= 400:
+        raise ThreadsAPIError(
+            f"長寿命トークンへの交換に失敗しました HTTP {resp.status_code}: {resp.text[:300]}"
+        )
+
+    data = resp.json()
+    token = str(data.get("access_token", ""))
+    if not token:
+        raise ThreadsAPIError(f"長寿命トークンを取得できませんでした: {data}")
+    return {"access_token": token, "expires_in": int(data.get("expires_in", 0) or 0)}
+
+
 def refresh_long_lived_token(
     access_token: str,
     session: requests.Session | None = None,

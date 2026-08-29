@@ -1,0 +1,72 @@
+# 【Threads 連携】管理画面の「Threadsでログイン」から呼び出される。
+#
+# 利用者が Threads の認可画面で「許可」を押すと認可コードが発行される。
+# そのコードを長寿命アクセストークンへ交換するにはアプリシークレットが必要なため、
+# ブラウザではなくこのワークフローの中だけで行う（ブラウザへ秘密を渡さない）。
+#
+# 認可コード自体も公開リポジトリの実行ログに残さないよう、入力ではなく
+# 一時シークレット THREADS_OAUTH_CODE として受け取り、使い終わったら削除する。
+name: Threads Connect
+
+on:
+  workflow_dispatch:
+    inputs:
+      account_id:
+        description: "対象アカウントID"
+        type: string
+        required: true
+      redirect_uri:
+        description: "認可時に使ったリダイレクトURL（管理画面のURL）"
+        type: string
+        required: true
+
+concurrency:
+  group: threads-connect
+  cancel-in-progress: false
+
+jobs:
+  connect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Check required secrets
+        run: |
+          missing=""
+          [ -z "${{ secrets.WORKFLOW_TOKEN }}" ] && missing="$missing WORKFLOW_TOKEN"
+          [ -z "${{ secrets.THREADS_APP_SECRET }}" ] && missing="$missing THREADS_APP_SECRET"
+          [ -z "${{ secrets.THREADS_OAUTH_CODE }}" ] && missing="$missing THREADS_OAUTH_CODE"
+          if [ -n "$missing" ]; then
+            echo "::error::次のシークレットが未設定です:$missing"
+            exit 1
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Exchange authorization code for a long-lived token
+        env:
+          PYTHONUNBUFFERED: "1"
+          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
+          THREADS_OAUTH_CODE: ${{ secrets.THREADS_OAUTH_CODE }}
+        run: |
+          python -m src.threads_connect \
+            --account "${{ inputs.account_id }}" \
+            --redirect-uri "${{ inputs.redirect_uri }}"
+
+      - name: Commit & push token status
+        if: always()
+        run: 'bash scripts/commit_and_push.sh "chore: connect threads account"'
