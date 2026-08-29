@@ -27,31 +27,64 @@
 
     <hr class="rule" />
 
+    <div class="card pad-lg">
+      <h2 class="h3 mb-2">STEP 1　GitHubのトークンを作る</h2>
+      <p class="small">
+        管理画面がリポジトリを読み書きするための鍵です。下のボタンを押すと、
+        必要な権限にチェックが入った状態で作成画面が開きます。
+      </p>
+      <ol class="ol small">
+        <li>下のボタンから作成画面を開く（GitHubにログインしていなければログイン）</li>
+        <li>画面下部の <strong>Generate token</strong> を押す</li>
+        <li>表示された <code class="code">ghp_...</code> をコピーする
+            <span class="req">※この画面を離れると二度と表示されません</span></li>
+      </ol>
+      <p class="mt-2">
+        <a class="bold" id="login-token-link" target="_blank" rel="noopener"
+           href="https://github.com/settings/tokens/new?scopes=repo&description=sns-admin">
+          → トークン作成画面を開く（repo権限つき）
+        </a>
+      </p>
+      <p class="hint">
+        権限は <code class="code">repo</code> だけでOKです。
+        設定ファイルの読み書きと、APIキーの暗号化保存の両方に使います。
+      </p>
+    </div>
+
     <form id="login-form" class="stack-sm">
+      <h2 class="h3">STEP 2　接続する</h2>
       <div>
         <label class="label" for="login-token">Personal Access Token <span class="req">必須</span></label>
         <input id="login-token" type="password" class="input mono" placeholder="ghp_..."
                autocomplete="off" required />
-        <p class="hint">
-          classic トークンなら <code class="code">repo</code> 権限だけでOKです。
-          設定ファイルの読み書きと、APIキーの暗号化保存の両方に使います。
-        </p>
-      </div>
-
-      <div class="grid-2">
-        <div>
-          <label class="label" for="login-owner">オーナー名 <span class="req">必須</span></label>
-          <input id="login-owner" type="text" class="input" placeholder="your-name" required />
-        </div>
-        <div>
-          <label class="label" for="login-repo">リポジトリ名 <span class="req">必須</span></label>
-          <input id="login-repo" type="text" class="input" placeholder="Rakuten-affiliate" required />
-        </div>
+        <p class="hint">コピーした <code class="code">ghp_...</code> を貼り付けてください。</p>
       </div>
 
       <div>
-        <label class="label" for="login-branch">ブランチ</label>
-        <input id="login-branch" type="text" class="input" value="main" />
+        <div class="between">
+          <span class="label" style="margin: 0;">接続先のリポジトリ</span>
+          <button type="button" id="login-repo-toggle" class="btn-ghost btn-sm">変更する</button>
+        </div>
+        <p id="login-repo-detected" class="mono mt-1"></p>
+        <p id="login-repo-note" class="hint"></p>
+      </div>
+
+      <div id="login-repo-fields" class="hidden stack-sm">
+        <div class="grid-2">
+          <div>
+            <label class="label" for="login-owner">オーナー名（GitHubのユーザー名） <span class="req">必須</span></label>
+            <input id="login-owner" type="text" class="input" required />
+          </div>
+          <div>
+            <label class="label" for="login-repo">リポジトリ名 <span class="req">必須</span></label>
+            <input id="login-repo" type="text" class="input" required />
+          </div>
+        </div>
+        <div>
+          <label class="label" for="login-branch">ブランチ</label>
+          <input id="login-branch" type="text" class="input" value="main" />
+          <p class="hint">通常は <code class="code">main</code> のままで構いません。</p>
+        </div>
       </div>
 
       <div id="login-error" class="hidden alert-error"></div>
@@ -65,16 +98,16 @@
     </form>
 
     <details class="small">
-      <summary class="bold" style="cursor: pointer;">トークンの取り方</summary>
-      <ol class="ol">
-        <li>GitHubの <code class="code">Settings</code> → <code class="code">Developer settings</code> を開く</li>
-        <li><code class="code">Personal access tokens</code> → <code class="code">Tokens (classic)</code></li>
-        <li><code class="code">Generate new token (classic)</code> を選ぶ</li>
-        <li>スコープの <code class="code">repo</code> にチェックを入れて発行
-            （fine-grained の場合は <code class="code">Contents</code> と
-             <code class="code">Secrets</code> を Read and write に）</li>
-        <li>表示された <code class="code">ghp_...</code> をコピーして上に貼り付ける</li>
-      </ol>
+      <summary class="bold" style="cursor: pointer;">うまく接続できないとき</summary>
+      <ul class="ol">
+        <li><strong>リポジトリが見つかりません</strong>と出る →
+            オーナー名・リポジトリ名の綴りと、トークンの <code class="code">repo</code> 権限を確認</li>
+        <li><strong>トークンが正しくない</strong>と出る →
+            期限切れの可能性があります。作り直してください</li>
+        <li>fine-grained トークンを使う場合は、対象リポジトリに対して
+            <code class="code">Contents</code> と <code class="code">Secrets</code> を
+            Read and write にしてください</li>
+      </ul>
     </details>
 
   </div>
@@ -204,6 +237,52 @@
           <code id="acc-secret-name" class="code break-all">-</code>
           <div id="acc-secret-status" class="row wrap gap-xs mt-2"></div>
         </div>
+
+        <details>
+          <summary class="small bold" style="cursor: pointer;">トークンの取得のしかた</summary>
+
+          <ol class="ol small">
+            <li>Meta for Developers で開発者登録し、<strong>マイアプリ → アプリを作成</strong>
+                （ユースケースは「Threads APIを使用してアクセス」）</li>
+            <li>Threads API の設定画面で次の3つの権限を有効にする<br />
+                <code class="code">threads_basic</code>
+                <code class="code">threads_content_publish</code>
+                <code class="code">threads_manage_insights</code>
+                <span class="block tiny">3つ目はいいね数の取得（再投稿機能）に必要です</span></li>
+            <li>Threadsアカウントを連携して<strong>アクセストークンを生成</strong>する</li>
+            <li>最初のトークンは1時間で切れます。下の欄で<strong>60日有効なトークンに交換</strong>してください</li>
+          </ol>
+
+          <p class="small">→ <a href="https://developers.facebook.com/" target="_blank" rel="noopener">
+            Meta for Developers を開く</a></p>
+
+          <div class="card mt-2">
+            <div class="bold small mb-2">長寿命トークンへの交換</div>
+            <p class="tiny mb-2">
+              アプリシークレットは Meta のアプリ設定 → ベーシック にあります。
+              入力した値はこのブラウザの中だけで使われ、どこにも送信されません。
+            </p>
+            <div class="grid-2">
+              <div>
+                <label class="label" for="exchange-secret">アプリシークレット</label>
+                <input id="exchange-secret" type="password" class="input mono" autocomplete="off" />
+              </div>
+              <div>
+                <label class="label" for="exchange-short">いま生成したトークン</label>
+                <input id="exchange-short" type="password" class="input mono" autocomplete="off" />
+              </div>
+            </div>
+            <p class="mt-2">
+              <a id="exchange-link" class="bold" target="_blank" rel="noopener" href="#">
+                → 交換ページを開く
+              </a>
+            </p>
+            <p id="exchange-note" class="hint">
+              両方を入力すると、このリンクから交換ページを開けます。
+              表示された <code class="code">access_token</code> の値（THQ で始まる文字列）を下に貼り付けてください。
+            </p>
+          </div>
+        </details>
 
         <div>
           <label class="label" for="acc-token">Threadsアクセストークン</label>
