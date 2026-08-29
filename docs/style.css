@@ -505,6 +505,8 @@ footer { border-top: var(--line); padding: var(--gap) 0 var(--gap-lg); font-size
 .steps { list-style: none; margin: 0; padding: 0; }
 .steps li { display: flex; gap: var(--gap); padding: 16px 0; border-bottom: var(--line); }
 .steps li:last-child { border-bottom: 0; }
+/* 本文の列は必ず残り幅いっぱいに広げる（行ごとに幅が変わって左右がちぐはぐになるのを防ぐ） */
+.steps li > :last-child { flex: 1 1 auto; min-width: 0; }
 .step-no {
   flex-shrink: 0;
   width: 28px; height: 28px;
@@ -544,3 +546,31 @@ code.code:not(:only-child) { text-align: left; }
 .doc th { font-size: 12px; font-weight: 800; letter-spacing: 0.05em; }
 .doc .updated { font-size: 13px; }
 .doc .fill { border-bottom: var(--line-thick); padding: 0 4px; font-weight: 700; }
+
+/* ------------------------------------------------------------------
+   設定ウィザード（1画面ずつ進む案内）
+   ------------------------------------------------------------------ */
+.wiz-head { border-bottom: var(--line-thick); padding-bottom: var(--gap-sm); }
+.wiz-count { font-size: 12px; font-weight: 700; }
+.wiz-title { font-size: clamp(22px, 5vw, 30px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.25; margin: 4px 0 0; }
+
+/* 進み具合の点 */
+.wiz-dots { display: flex; gap: 6px; margin-top: var(--gap-sm); }
+.wiz-dot { flex: 1 1 0; height: 4px; background: var(--fg); opacity: 0.15; }
+.wiz-dot.on { opacity: 1; }
+.wiz-dot.now { background: var(--link-strong); opacity: 1; }
+
+/* 「画面で探す言葉」 */
+.find-box { border: var(--line); padding: var(--gap-sm) var(--gap); }
+.find-box .find-label { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.find-words { display: flex; flex-wrap: wrap; gap: 6px; }
+.find-word { border: var(--line); padding: 4px 10px; font-size: 13px; font-weight: 700; }
+
+/* 値の見た目の説明 */
+.looks { font-size: 13px; border-left: var(--line-thick); padding-left: var(--gap-sm); }
+
+.wiz-foot {
+  display: flex; gap: var(--gap-sm); align-items: center;
+  border-top: var(--line-thick); padding-top: var(--gap);
+}
+.wiz-foot .grow { flex: 1 1 auto; }

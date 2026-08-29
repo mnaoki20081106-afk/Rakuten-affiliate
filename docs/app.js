@@ -134,13 +134,13 @@ const GLOBAL_SECRETS = [
     name: THREADS_APP_SECRET_SECRET,
     label: "Threads アプリシークレット",
     required: true,
-    help: "トークンの発行に使います。GitHub Actions の中だけで使われ、ブラウザには渡りません。",
+    help: "トークンの発行に使います。上の「Threads連携の準備」からも登録できます。",
     link: "https://developers.facebook.com/",
     linkLabel: "Meta for Developers",
-    placeholder: "（アプリ設定 → ベーシック の app secret）",
+    placeholder: "（Threads API の設定画面にある Client Secret）",
     steps: [
-      "Meta のアプリ設定 → ベーシック を開く",
-      "「app secret」の「表示」を押して値をコピーする",
+      "アプリのダッシュボードから Threads API の設定画面（Settings）を開く",
+      "「アプリシークレット（Client Secret）」の表示を押して値をコピーする",
     ],
   },
   {
@@ -592,7 +592,9 @@ async function waitForConnectWorkflow(startedAt, timeoutMs = 180000) {
  */
 async function handleOAuthCallback() {
   const params = new URLSearchParams(location.search);
-  const code = params.get("code");
+  // Threads は戻り先URLの末尾に「#_」を付けることがある。
+  // location.search には入らないが、念のため取り除いておく。
+  const code = (params.get("code") || "").replace(/#_?$/, "") || null;
   const returnedState = params.get("state");
   const error = params.get("error_description") || params.get("error");
 
@@ -1119,174 +1121,209 @@ function renderUsedItems() {
  * 1つの流れとして見せる。リダイレクトURLはこの画面のURLから自動で決まる。
  */
 /**
- * 開発モードとライブモードの違いと、あとで本審査に出すときの準備。
- * 最初は開発モードのままで運用でき、必要になってから申請すればよい。
+ * Threads連携の準備ウィザード。
+ *
+ * Metaの画面は項目名が似た横文字ばかりで迷いやすいため、
+ * 1画面につき1つの作業だけを出し、「何をする画面か」「どこを見るか」
+ * 「その値はどんな見た目か」を日本語で示す。
  */
-function renderAppModeGuide() {
-  const origin = baseUrl();
-  return `<details class="mt-3">
-    <summary class="small bold" style="cursor: pointer;">開発モードのままで大丈夫？（ライブモードにする方法）</summary>
-
-    <p class="small mt-2">
-      <strong>自分のアカウントを運用するだけなら、開発モードのままで問題ありません。</strong>
-      ライブモードにするには Meta の本審査が必要ですが、審査を通さなくても
-      テスターに追加したアカウントであれば通常どおり投稿できます。
-    </p>
-
-    <table class="data mt-2">
-      <thead><tr><th></th><th>開発モード（最初はこちら）</th><th>ライブモード</th></tr></thead>
-      <tbody>
-        <tr>
-          <td class="bold">連携できるアカウント</td>
-          <td>アプリにテスターとして追加したアカウントのみ</td>
-          <td>制限なし</td>
-        </tr>
-        <tr>
-          <td class="bold">必要な手続き</td>
-          <td>なし（アカウントごとにテスター追加）</td>
-          <td>Meta の本審査（アプリレビュー）</td>
-        </tr>
-        <tr>
-          <td class="bold">向いている場面</td>
-          <td>自分のアカウントを運用する</td>
-          <td>他人にも使ってもらう</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <p class="small mt-3 bold">あとで審査に出すときに必要になるもの</p>
-    <p class="tiny">
-      審査ではプライバシーポリシーと利用規約のURLを求められます。
-      このリポジトリに<strong>ひな形を用意してあります</strong>（運営者名と連絡先の記入が必要です）。
-    </p>
-    <div class="mt-2">
-      <label class="label" for="policy-privacy">プライバシーポリシー</label>
-      <input id="policy-privacy" class="input mono" readonly value="${escapeHtml(origin)}privacy.html" />
-      <p class="tiny mt-1">
-        ${link(`${origin}privacy.html`, "内容を確認する")}
-        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}privacy.html">URLをコピー</button>
+const SETUP_STEPS = [
+  {
+    key: "create",
+    title: "Metaでアプリを作る",
+    lead: "Threadsと連携するための「アプリ」を1つ作ります。何アカウント運用しても、作るのはこの1つだけです。",
+    body: () => `
+      <ol class="ol">
+        <li>Meta for Developers を開いてログインする</li>
+        <li><strong>マイアプリ</strong> → <strong>アプリを作成</strong> を押す</li>
+        <li>ユースケースの選択で <strong>「Threads APIの使用」</strong> を選ぶ</li>
+        <li>アプリ名（何でも構いません。例：<code class="code">my-threads-bot</code>）と
+            連絡先メールアドレスを入力して作成する</li>
+      </ol>
+      <p class="mt-3">${link("https://developers.facebook.com/", "Meta for Developers を開く")}</p>`,
+  },
+  {
+    key: "callback",
+    title: "コールバックURLを登録する",
+    lead: "連携を許可したあと、この管理画面に戻ってくるためのURLです。Metaに登録しておかないと連携できません。",
+    body: () => `
+      <p class="small">
+        アプリのダッシュボードから <strong>Threads API の設定画面（Settings）</strong> を開きます。
+        その中の <strong>コールバックURL（Redirect URI）</strong> の欄に、下のURLを貼り付けて保存してください。
       </p>
-    </div>
-    <div class="mt-2">
-      <label class="label" for="policy-terms">利用規約</label>
-      <input id="policy-terms" class="input mono" readonly value="${escapeHtml(origin)}terms.html" />
-      <p class="tiny mt-1">
-        ${link(`${origin}terms.html`, "内容を確認する")}
-        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}terms.html">URLをコピー</button>
+      <div class="mt-3">
+        <label class="label" for="wiz-redirect">貼り付けるURL</label>
+        <input id="wiz-redirect" class="input mono" readonly value="${escapeHtml(redirectUri())}" />
+        <p class="mt-2"><button type="button" id="wiz-copy-redirect" class="btn-ghost btn-sm">URLをコピー</button></p>
+      </div>
+      <div class="alert-warn mt-3">
+        <strong>一字一句そのまま</strong>貼り付けてください。末尾の <code class="code">/</code> も必要です。
+        1文字でも違うと連携が失敗します。
+      </div>`,
+    setup: (root) => {
+      root.querySelector("#wiz-copy-redirect")?.addEventListener("click", () =>
+        copyText(redirectUri(), root.querySelector("#wiz-redirect")));
+    },
+  },
+  {
+    key: "appid",
+    title: "アプリIDを控える",
+    lead: "アプリを見分けるための番号です。秘密ではないので、そのまま設定ファイルに保存します。",
+    done: () => Boolean(threadsAppId()),
+    body: () => `
+      <p class="small">
+        さきほどと<strong>同じ設定画面（Settings）</strong>に表示されている
+        <strong>アプリID（Client ID）</strong> をコピーして、下に貼り付けてください。
       </p>
-    </div>
-
-    <p class="tiny mt-3">
-      このほか、審査ではビジネス認証や、実際の利用の様子を撮った動画などを求められる場合があります。
-      要件は変わるため、申請時に Meta の画面の案内を確認してください。
-    </p>
-  </details>`;
-}
-
-
-function renderThreadsAppCard() {
-  const appId = threadsAppId();
-  const secretOk = secretStatus(THREADS_APP_SECRET_SECRET).registered;
-  const ready = canConnectThreads();
-
-  return `<div class="card pad-lg">
-    <div class="between mb-2">
-      <h3 class="h2">Threadsアプリの設定</h3>
-      <span class="badge ${ready ? "badge-sent" : "badge-expired"}">${ready ? "設定済み" : "未設定"}</span>
-    </div>
-    <p class="small sub mb-3">
-      ここを一度だけ設定すると、以降は各アカウントの「Threadsでログイン」ボタンだけで連携できます。
-      アプリは1つ作れば、何アカウントでも使い回せます。
-    </p>
-
-    <ol class="steps">
-      <li>
-        <span class="step-no">1</span>
-        <span class="min-w-0">
-          <span class="bold">Metaでアプリを作る</span>
-          <span class="block tiny">
-            マイアプリ → アプリを作成 →「Threads APIを使用してアクセス」を選びます。
-            続いて Threads API の設定で、次の3つの権限を有効にしてください。
-          </span>
-          <span class="block tiny mt-1">
-            <code class="code">threads_basic</code>
-            <code class="code">threads_content_publish</code>
-            <code class="code">threads_manage_insights</code>
-          </span>
-          <span class="block small mt-1">→ ${link("https://developers.facebook.com/", "Meta for Developers を開く")}</span>
-        </span>
-      </li>
-
-      <li>
-        <span class="step-no">2</span>
-        <span class="min-w-0 full">
-          <span class="bold">リダイレクトURLを登録する</span>
-          <span class="block tiny">
-            Metaのアプリ設定にある「リダイレクトURL（Redirect Callback URLs）」の欄へ、
-            下のURLを<strong>そのまま</strong>貼り付けて保存してください。
-          </span>
-          <span class="block mt-2">
-            <input id="redirect-uri" class="input mono" readonly value="${escapeHtml(redirectUri())}" />
-          </span>
-          <span class="block mt-1">
-            <button type="button" id="copy-redirect" class="btn-ghost btn-sm">URLをコピー</button>
-          </span>
-        </span>
-      </li>
-
-      <li>
-        <span class="step-no ${appId ? "done" : ""}">${appId ? "✓" : "3"}</span>
-        <span class="min-w-0 full">
-          <span class="bold">アプリIDを保存する</span>
-          <span class="block tiny">
-            アプリ設定 → ベーシック にある「アプリID」です。
-            認可URLに必ず現れる公開情報のため、設定ファイルに保存されます。
-          </span>
-          <span class="block mt-2">
-            <input id="threads-app-id" class="input mono" value="${escapeHtml(appId)}"
-                   placeholder="1234567890123456" />
-          </span>
-          <span class="block mt-1">
-            <button type="button" id="save-app-id" class="btn-primary btn-sm">アプリIDを保存</button>
-          </span>
-        </span>
-      </li>
-
-      <li>
-        <span class="step-no ${secretOk ? "done" : ""}">${secretOk ? "✓" : "4"}</span>
-        <span class="min-w-0">
-          <span class="bold">アプリシークレットを保存する</span>
-          <span class="block tiny">
-            同じベーシック画面の「app secret」です。下の一覧にある
-            <code class="code">THREADS_APP_SECRET</code> へ暗号化して保存してください。
-          </span>
-        </span>
-      </li>
-
-      <li>
-        <span class="step-no">5</span>
-        <span class="min-w-0">
-          <span class="bold">運用するアカウントをテスターに追加する</span>
-          <span class="block tiny">
-            作ったばかりのアプリは<strong>開発モード</strong>です。この状態で連携できるのは、
-            アプリに役割を持つアカウントだけなので、運用する各Threadsアカウントを
-            <strong>テスター</strong>として追加し、そのアカウント側で招待を承認してください。
-          </span>
-          <span class="block tiny mt-1">
-            Metaのアプリ設定 → アプリロール → role → テスターを追加
-          </span>
-        </span>
-      </li>
-    </ol>
-
-    ${renderAppModeGuide()}
-
-    ${ready ? `<div class="alert-info mt-3">
-      設定は完了しています。「アカウント管理」タブの各アカウントにある
-      <strong>「Threadsでログイン」</strong>から連携してください。
-    </div>` : ""}
-  </div>`;
-}
+      <div class="looks mt-3">
+        <strong>見た目の目安：</strong>数字だけが15〜17桁ほど並んだ値です。<br />
+        例）<span class="mono">1234567890123456</span>
+      </div>
+      <div class="mt-3">
+        <label class="label" for="wiz-app-id">アプリID</label>
+        <input id="wiz-app-id" class="input mono" inputmode="numeric"
+               value="${escapeHtml(threadsAppId())}" placeholder="1234567890123456" />
+        <p class="mt-2"><button type="button" id="wiz-save-app-id" class="btn-primary btn-sm">保存する</button></p>
+      </div>`,
+    setup: (root) => {
+      root.querySelector("#wiz-save-app-id")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const value = root.querySelector("#wiz-app-id").value.trim();
+        if (!/^[0-9]+$/.test(value)) {
+          toast("アプリIDは数字だけの値です。設定画面の「アプリID（Client ID）」を確認してください。", "error");
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "保存中...";
+        try {
+          const updated = mergeDeep(state.settings, { threads: { app_id: value } });
+          await putJson(PATHS.settings, updated, "chore(settings): set threads app id");
+          state.settings = updated;
+          toast("アプリIDを保存しました", "success");
+          renderWizard();
+        } catch (error) {
+          toast(`保存に失敗しました: ${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+          button.textContent = "保存する";
+        }
+      });
+    },
+  },
+  {
+    key: "appsecret",
+    title: "アプリシークレットを控える",
+    lead: "トークンを発行するときに使う、パスワードにあたる値です。暗号化して保存されます。",
+    done: () => secretStatus(THREADS_APP_SECRET_SECRET).registered,
+    body: () => `
+      <p class="small">
+        <strong>同じ設定画面（Settings）</strong>にある
+        <strong>アプリシークレット（Client Secret）</strong> をコピーして、下に貼り付けてください。
+      </p>
+      <div class="looks mt-3">
+        <strong>見た目の目安：</strong>英数字が30文字ほど並んだ値です。<br />
+        最初は伏せ字（●●●）になっているので、<strong>「表示」</strong>にあたるボタンを押すと読めます。
+      </div>
+      <div class="mt-3">
+        <label class="label" for="wiz-app-secret">アプリシークレット</label>
+        <input id="wiz-app-secret" type="password" class="input mono" autocomplete="off"
+               placeholder="${secretStatus(THREADS_APP_SECRET_SECRET).registered ? "登録済み（変更するときだけ入力）" : ""}" />
+        <p class="mt-2"><button type="button" id="wiz-save-secret" class="btn-primary btn-sm">暗号化して保存</button></p>
+      </div>
+      <div class="alert-warn mt-3">
+        この値はブラウザの中で暗号化されてから送られ、GitHubの保管庫にだけ入ります。
+        リポジトリのファイルには書き込まれません。
+      </div>`,
+    setup: (root) => {
+      root.querySelector("#wiz-save-secret")?.addEventListener("click", async (event) => {
+        const button = event.currentTarget;
+        const input = root.querySelector("#wiz-app-secret");
+        const value = input.value.trim();
+        if (!value) {
+          toast("アプリシークレットを入力してください", "error");
+          return;
+        }
+        button.disabled = true;
+        button.textContent = "保存中...";
+        try {
+          await putSecret(THREADS_APP_SECRET_SECRET, value);
+          input.value = "";
+          toast("アプリシークレットを暗号化して保存しました", "success");
+          renderWizard();
+        } catch (error) {
+          toast(`保存に失敗しました: ${error.message}`, "error");
+        } finally {
+          button.disabled = false;
+          button.textContent = "暗号化して保存";
+        }
+      });
+    },
+  },
+  {
+    key: "tester",
+    title: "Threadsテスターを追加する",
+    lead: "作ったばかりのアプリは試験中の状態です。投稿したいThreadsアカウントを、このアプリに登録します。",
+    body: () => `
+      <p class="small">
+        <strong>同じ設定画面（Settings）</strong>にある
+        <strong>「Threadsテスターの追加/削除」</strong> を開きます。
+      </p>
+      <ol class="ol mt-2">
+        <li>連携したいThreadsアカウントの<strong>ユーザーネーム</strong>を入力して追加する</li>
+        <li>追加した直後は <strong>Pending（保留中）</strong> と表示されます</li>
+      </ol>
+      <div class="alert-warn mt-3">
+        <strong>ここではまだ終わりません。</strong>
+        次の画面で、Threadsアプリ側から招待を承認する必要があります。
+      </div>
+      <p class="tiny mt-2">
+        運用するアカウントが複数ある場合は、そのぶんユーザーネームを追加してください。
+      </p>`,
+  },
+  {
+    key: "approve",
+    title: "スマホで招待を承認する",
+    lead: "Pending（保留中）を解除します。この操作はパソコンではなく、スマートフォンのThreadsアプリで行います。",
+    body: () => `
+      <ol class="ol">
+        <li>スマートフォンで <strong>Threadsアプリ</strong> を開く
+            （追加したアカウントでログインしている状態にする）</li>
+        <li><strong>設定</strong> → <strong>アカウント</strong> →
+            <strong>ウェブサイトのアクセス許可</strong> の順に進む</li>
+        <li>開発者からの<strong>招待を承認</strong>する</li>
+      </ol>
+      <div class="alert-info mt-3">
+        承認すると Pending が解除され、連携できるようになります。
+        複数アカウントある場合は、それぞれのアカウントで承認してください。
+      </div>`,
+  },
+  {
+    key: "done",
+    title: "準備完了",
+    lead: "これで下ごしらえは終わりです。あとはアカウントごとにボタンを押すだけです。",
+    body: () => `
+      <ol class="ol">
+        <li><strong>「アカウント管理」タブ</strong>を開く</li>
+        <li>連携したいアカウントの <strong>「Threadsでログイン」</strong> を押す</li>
+        <li>Threadsのログイン画面が出るので、ログインして「許可」を押す</li>
+      </ol>
+      <p class="small mt-3">
+        戻ってくると、トークンが自動で発行されて保存されます。
+        有効期限（60日）は毎週自動で延長されるので、以後の手入れは不要です。
+      </p>
+      <div class="mt-3">
+        <button type="button" id="wiz-goto-accounts" class="btn-primary">アカウント管理を開く</button>
+      </div>`,
+    setup: (root) => {
+      root.querySelector("#wiz-goto-accounts")?.addEventListener("click", () => {
+        closeSetupWizard();
+        state.view = "accounts";
+        render();
+        window.scrollTo({ top: 0 });
+      });
+    },
+  },
+];
 
 /** クリップボードへコピーする。使えない環境では選択状態にして手動コピーを促す。 */
 async function copyText(value, fallbackInput) {
@@ -1299,36 +1336,169 @@ async function copyText(value, fallbackInput) {
   }
 }
 
-function setupThreadsAppCard(root) {
-  root.querySelector("#copy-redirect")?.addEventListener("click", () =>
-    copyText(redirectUri(), root.querySelector("#redirect-uri")));
+function openSetupWizard(index = 0) {
+  state.wizStep = index;
+  $("#setup-modal").classList.remove("hidden");
+  document.body.style.overflow = "hidden";
+  renderWizard();
+}
 
+function closeSetupWizard() {
+  $("#setup-modal").classList.add("hidden");
+  document.body.style.overflow = "";
+  render();
+}
+
+function renderWizard() {
+  const total = SETUP_STEPS.length;
+  const index = Math.max(0, Math.min(state.wizStep ?? 0, total - 1));
+  state.wizStep = index;
+  const step = SETUP_STEPS[index];
+  const root = $("#setup-body");
+
+  root.innerHTML = `
+    <div class="wiz-head">
+      <div class="wiz-count">${index + 1} / ${total}${step.done?.() ? "　✓ 入力済み" : ""}</div>
+      <h3 class="wiz-title">${escapeHtml(step.title)}</h3>
+      <div class="wiz-dots">
+        ${SETUP_STEPS.map((_, i) =>
+          `<span class="wiz-dot ${i < index ? "on" : ""} ${i === index ? "now" : ""}"></span>`).join("")}
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <p class="small">${escapeHtml(step.lead)}</p>
+      <div class="mt-3">${step.body()}</div>
+    </div>
+
+    <div class="wiz-foot mt-3">
+      <button type="button" id="wiz-prev" class="btn-ghost" ${index === 0 ? "disabled" : ""}>戻る</button>
+      <span class="grow"></span>
+      ${index === total - 1
+        ? `<button type="button" id="wiz-finish" class="btn-ghost">閉じる</button>`
+        : `<button type="button" id="wiz-next" class="btn-primary">次へ</button>`}
+    </div>
+  `;
+
+  step.setup?.(root);
+  root.querySelector("#wiz-prev")?.addEventListener("click", () => { state.wizStep -= 1; renderWizard(); });
+  root.querySelector("#wiz-next")?.addEventListener("click", () => { state.wizStep += 1; renderWizard(); });
+  root.querySelector("#wiz-finish")?.addEventListener("click", closeSetupWizard);
+  root.scrollIntoView?.({ block: "start" });
+}
+
+function setupWizard() {
+  $("#setup-close").addEventListener("click", closeSetupWizard);
+  $("#setup-modal").addEventListener("click", (event) => {
+    if (event.target === $("#setup-modal")) closeSetupWizard();
+  });
+}
+
+/** 「APIキー」タブに置く、Threads連携の準備状況カード。 */
+function renderThreadsAppCard() {
+  const appId = threadsAppId();
+  const secretOk = secretStatus(THREADS_APP_SECRET_SECRET).registered;
+  const ready = canConnectThreads();
+
+  return `<div class="card pad-lg">
+    <div class="between mb-2">
+      <h3 class="h2">Threads連携の準備</h3>
+      <span class="badge ${ready ? "badge-sent" : "badge-expired"}">${ready ? "準備できています" : "未設定"}</span>
+    </div>
+    <p class="small sub">
+      Threadsに投稿するための下ごしらえです。最初に1回だけ行えば、
+      以降は各アカウントの「Threadsでログイン」を押すだけで連携できます。
+    </p>
+
+    <ul class="steps mt-2">
+      <li>
+        <span class="step-no ${appId ? "done" : ""}">${appId ? "✓" : "1"}</span>
+        <span><span class="bold">アプリID</span>
+          <span class="block tiny">${appId ? `登録済み（${escapeHtml(appId)}）` : "未登録"}</span></span>
+      </li>
+      <li>
+        <span class="step-no ${secretOk ? "done" : ""}">${secretOk ? "✓" : "2"}</span>
+        <span><span class="bold">アプリシークレット</span>
+          <span class="block tiny">${secretOk ? "登録済み" : "未登録"}</span></span>
+      </li>
+    </ul>
+
+    <div class="row wrap gap-sm mt-3">
+      <button type="button" id="open-setup" class="btn-primary">
+        ${ready ? "設定を見直す" : "設定をはじめる"}
+      </button>
+      <span class="tiny">全7画面・1画面ずつ進みます</span>
+    </div>
+
+    ${renderAppModeGuide()}
+  </div>`;
+}
+
+/**
+ * 「テスターに追加」が必要なのは開発モードだからで、審査を通せば不要になる。
+ * ただし自分のアカウントを動かすだけなら審査は不要なので、その旨を先に伝える。
+ * 普段は畳んでおき、必要になったときだけ開いてもらう。
+ */
+function renderAppModeGuide() {
+  const base = baseUrl();
+  return `<details class="mt-3">
+    <summary class="small bold" style="cursor: pointer;">「テスターに追加」をしなくて済む方法はある？</summary>
+
+    <p class="small mt-2">
+      あります。ただし <strong>Metaの審査（アプリレビュー）が必要</strong>です。
+      <strong>自分のアカウントを運用するだけなら、開発モードのままで問題ありません。</strong>
+      投稿もいいね数の取得も、通常どおり動きます。
+    </p>
+
+    <table class="data mt-2">
+      <thead><tr><th></th><th>開発モード（最初はこちら）</th><th>ライブモード</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="bold">連携できるアカウント</td>
+          <td>テスターに追加したアカウントのみ</td>
+          <td>制限なし</td>
+        </tr>
+        <tr>
+          <td class="bold">必要な手続き</td>
+          <td>なし</td>
+          <td>Metaの審査（アプリレビュー）</td>
+        </tr>
+        <tr>
+          <td class="bold">向いている場面</td>
+          <td>自分のアカウントを運用する</td>
+          <td>他の人にも使ってもらう</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="small mt-3 bold">審査に出すときに必要になるURL</p>
+    <p class="tiny">
+      プライバシーポリシーと利用規約のひな形を用意してあります（運営者名と連絡先の記入が必要です）。
+    </p>
+    <div class="mt-2">
+      <label class="label" for="policy-privacy">プライバシーポリシー</label>
+      <input id="policy-privacy" class="input mono" readonly value="${escapeHtml(base)}privacy.html" />
+      <p class="tiny mt-1">
+        ${link(`${base}privacy.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(base)}privacy.html">URLをコピー</button>
+      </p>
+    </div>
+    <div class="mt-2">
+      <label class="label" for="policy-terms">利用規約</label>
+      <input id="policy-terms" class="input mono" readonly value="${escapeHtml(base)}terms.html" />
+      <p class="tiny mt-1">
+        ${link(`${base}terms.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(base)}terms.html">URLをコピー</button>
+      </p>
+    </div>
+  </details>`;
+}
+
+function setupThreadsAppCard(root) {
+  root.querySelector("#open-setup")?.addEventListener("click", () => openSetupWizard(0));
   root.querySelectorAll("[data-copy]").forEach((button) => {
     button.addEventListener("click", () =>
       copyText(button.dataset.copy, button.closest("div")?.querySelector("input")));
-  });
-
-  root.querySelector("#save-app-id")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const value = root.querySelector("#threads-app-id").value.trim();
-    if (!/^[0-9]+$/.test(value)) {
-      toast("アプリIDは数字のみです。ベーシック画面の「アプリID」を確認してください。", "error");
-      return;
-    }
-    button.disabled = true;
-    button.textContent = "保存中...";
-    try {
-      const updated = mergeDeep(state.settings, { threads: { app_id: value } });
-      await putJson(PATHS.settings, updated, "chore(settings): set threads app id");
-      state.settings = updated;
-      toast("アプリIDを保存しました", "success");
-      render();
-    } catch (error) {
-      toast(`保存に失敗しました: ${error.message}`, "error");
-    } finally {
-      button.disabled = false;
-      button.textContent = "アプリIDを保存";
-    }
   });
 }
 
@@ -1885,6 +2055,7 @@ async function main() {
   setupLogin();
   setupChrome();
   setupAccountModal();
+  setupWizard();
 
   const saved = loadAuth();
   if (saved?.token && saved.owner && saved.repo) {
