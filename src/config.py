@@ -131,8 +131,12 @@ class Account:
     tone: str = "親しみやすい丁寧な口調"
     target: str = ""
     search_keywords: list[str] = field(default_factory=list)
-    # Threads のユーザー ID（公開情報。アクセストークンはここには持たせない）
+    # Threads のユーザー ID / ユーザーネーム（いずれも公開情報。
+    # アクセストークンはここには持たせない）
     threads_user_id: str = ""
+    threads_username: str = ""
+    # 楽天アフィリエイトへサイト登録を済ませたか（手作業なので自己申告）
+    rakuten_site_registered: bool = False
     # 投稿設定
     posts_per_day: int = 7
     rakuten_affiliate_id: str = ""
@@ -157,6 +161,12 @@ class Account:
             f"【ターゲット】{self.target}" if self.target else "",
         ]
         return "\n".join(p for p in parts if p)
+
+    @property
+    def threads_url(self) -> str:
+        """楽天アフィリエイトへ登録する、このアカウントの公開URL。"""
+        name = (self.threads_username or "").lstrip("@").strip()
+        return f"https://www.threads.com/@{name}" if name else ""
 
     @property
     def keywords(self) -> list[str]:

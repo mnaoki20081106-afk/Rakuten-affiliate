@@ -158,3 +158,37 @@ def test_ウィザードは画面全体を占める():
 
 def test_通知が積み上がって画面を覆わない():
     assert "area.children.length > 3" in JS
+
+
+def test_楽天へのサイト登録の手順がある():
+    """リンクを貼る場所を楽天に登録しないと成果が計上されないため、手順を用意する。"""
+    for label in (
+        "サイト情報の登録",
+        "サイト情報を追加登録する",
+        "運営サイト名",
+        "運営サイトURL",
+        "成果として計上されません",
+    ):
+        assert label in JS, f"「{label}」の案内がありません"
+    # 任意入力の欄は「空でよい」と明示する
+    assert "空でも登録できます" in JS
+
+
+def test_ThreadsのURLはユーザーネームから組み立てる():
+    assert "https://www.threads.com/@" in JS
+    assert "threadsUrl" in JS
+    # @ を付けて入力されても取り除く
+    assert 'replace(/^@/, "")' in JS
+
+
+def test_楽天のサイト登録もアカウントごとに管理する():
+    from src.config import Account
+
+    fields = Account.__dataclass_fields__
+    assert "threads_username" in fields
+    assert "rakuten_site_registered" in fields
+    # 管理画面側にもアカウントごとの導線がある
+    # （JS と Python の項目一致は test_admin_ui_contract.py が担当する）
+    assert '"threads_username"' in JS or "threads_username" in JS
+    assert "rakuten_site_registered" in JS
+    assert "data-rakuten=" in JS

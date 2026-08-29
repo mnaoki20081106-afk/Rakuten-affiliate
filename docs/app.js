@@ -191,7 +191,8 @@ const ACCOUNT_DEFAULTS = {
   id: "", name: "", enabled: true,
   genre: "", worldview: "", strength: "", tone: "", target: "",
   search_keywords: [],
-  threads_user_id: "",
+  threads_user_id: "", threads_username: "",
+  rakuten_site_registered: false,
   posts_per_day: 7, rakuten_affiliate_id: "", note: "",
 };
 
@@ -236,6 +237,12 @@ function slugify(text) {
     .replace(/[^0-9A-Za-z]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
+}
+
+/** 楽天アフィリエイトへ登録する、そのアカウントの公開URL。 */
+function threadsUrl(username) {
+  const name = String(username || "").replace(/^@/, "").trim();
+  return name ? `https://www.threads.com/@${name}` : "";
 }
 
 /** アカウントIDからシークレット名を求める（Account.token_secret_name と同じ規則）。 */
@@ -919,6 +926,20 @@ function renderSetupChecklist() {
       action: { href: "https://developers.facebook.com/", label: "Meta for Developers を開く" },
     },
     {
+      done: state.accounts.length > 0
+        && state.accounts.filter((a) => a.enabled).every((a) => a.rakuten_site_registered),
+      label: "楽天アフィリエイトにサイトを登録する",
+      hint: (() => {
+        const missing = state.accounts
+          .filter((a) => a.enabled && !a.rakuten_site_registered)
+          .map((a) => a.name || a.id);
+        return missing.length
+          ? `未登録: ${missing.join(" / ")}（登録しないと成果が計上されません）`
+          : "すべて登録済みです";
+      })(),
+      action: { href: "#accounts", label: "「アカウント管理」タブを開く" },
+    },
+    {
       done: Boolean(state.runLog?.generated_at),
       label: "バッチを1回実行する",
       hint: "Run workflow を押すと翌日分の投稿が生成されます",
@@ -1328,6 +1349,214 @@ const SETUP_STEPS = [
   },
 ];
 
+/**
+ * 楽天アフィリエイトへのサイト登録の手順（アカウントごと）。
+ *
+ * 楽天では、アフィリエイトリンクを貼る場所（ここではThreadsのプロフィール）を
+ * 「運営サイト」としてあらかじめ登録しておく必要がある。
+ * 登録していないと、リンクを貼っても成果が計上されない。
+ */
+function rakutenSiteSteps(accountId) {
+  const account = () => state.accounts.find((a) => a.id === accountId) || {};
+
+  return [
+    {
+      key: "why",
+      title: "なぜ登録が必要か",
+      lead: "楽天では、アフィリエイトリンクを貼る場所を「運営サイト」として事前に登録しておく決まりです。",
+      body: () => `
+        <p class="small">
+          この登録をしていないと、投稿にリンクを貼っても<strong>成果として計上されません</strong>。
+          Threadsのプロフィールページを「運営サイト」として登録します。
+        </p>
+        <div class="alert-warn mt-3">
+          登録は<strong>Threadsアカウントごと</strong>に必要です。
+          複数アカウントを運用する場合は、それぞれのURLを登録してください。
+        </div>
+        <p class="small mt-3">
+          いま設定しているアカウント：<strong>${escapeHtml(account().name || accountId)}</strong>
+        </p>`,
+    },
+    {
+      key: "url",
+      title: "ThreadsのURLを調べる",
+      lead: "登録するURLは、あなたのThreadsプロフィールのアドレスです。",
+      done: () => Boolean(account().threads_username),
+      body: () => `
+        <p class="small bold">ユーザーネームの確認のしかた</p>
+        <ol class="ol">
+          <li>スマートフォンで <strong>Threadsアプリ</strong> を開く</li>
+          <li>右下の<strong>プロフィール</strong>を開く</li>
+          <li>名前の下にある <strong>@から始まる文字列</strong> がユーザーネームです</li>
+        </ol>
+        <p class="tiny mt-2">
+          プロフィールの共有メニューから「リンクをコピー」しても同じURLが手に入ります。
+        </p>
+
+        <div class="mt-3">
+          <label class="label" for="wiz-username">ユーザーネーム（@は不要）</label>
+          <input id="wiz-username" class="input mono"
+                 value="${escapeHtml(account().threads_username || "")}" placeholder="beauty_lab" />
+          <p class="hint">入力すると、登録するURLが下に表示されます。</p>
+        </div>
+
+        <div class="mt-3">
+          <label class="label" for="wiz-threads-url">登録するURL</label>
+          <input id="wiz-threads-url" class="input mono" readonly
+                 value="${escapeHtml(threadsUrl(account().threads_username))}" />
+          <p class="mt-2">
+            <button type="button" id="wiz-copy-url" class="btn-ghost btn-sm">URLをコピー</button>
+            <button type="button" id="wiz-save-username" class="btn-primary btn-sm">保存する</button>
+          </p>
+        </div>`,
+      setup: (root) => {
+        const input = root.querySelector("#wiz-username");
+        const preview = root.querySelector("#wiz-threads-url");
+        const sync = () => { preview.value = threadsUrl(input.value); };
+        input.addEventListener("input", sync);
+
+        root.querySelector("#wiz-copy-url").addEventListener("click", () => {
+          if (!preview.value) {
+            toast("先にユーザーネームを入力してください", "error");
+            return;
+          }
+          copyText(preview.value, preview);
+        });
+
+        root.querySelector("#wiz-save-username").addEventListener("click", async (event) => {
+          const button = event.currentTarget;
+          const value = input.value.replace(/^@/, "").trim();
+          if (!value) {
+            toast("ユーザーネームを入力してください", "error");
+            return;
+          }
+          const index = state.accounts.findIndex((a) => a.id === accountId);
+          if (index < 0) return;
+          const backup = [...state.accounts];
+          button.disabled = true;
+          button.textContent = "保存中...";
+          try {
+            state.accounts[index] = { ...state.accounts[index], threads_username: value };
+            await saveAccounts(`chore(accounts): set threads username for ${accountId}`);
+            toast("保存しました", "success");
+            renderWizard();
+          } catch (error) {
+            state.accounts = backup;
+            toast(`保存に失敗しました: ${error.message}`, "error");
+          } finally {
+            button.disabled = false;
+            button.textContent = "保存する";
+          }
+        });
+      },
+    },
+    {
+      key: "open",
+      title: "登録画面を開く",
+      lead: "楽天アフィリエイトの「サイト情報の登録」画面まで進みます。",
+      body: () => `
+        <ol class="ol">
+          <li>楽天アフィリエイトを開く</li>
+          <li>「<strong>メニュー</strong>」のアイコンを押す</li>
+          <li>「<strong>マイページ</strong>」を押す</li>
+          <li>「<strong>サイト情報の登録</strong>」を押す</li>
+          <li>「<strong>サイト情報を追加登録する</strong>」を押す</li>
+        </ol>
+        <p class="small mt-3">→ ${link("https://affiliate.rakuten.co.jp/", "楽天アフィリエイトを開く")}</p>`,
+    },
+    {
+      key: "form",
+      title: "サイト情報を入力する",
+      lead: "入力するのは実質2つだけです。ジャンルの欄は任意なので空のままで構いません。",
+      body: () => `
+        <table class="data">
+          <thead><tr><th>入力欄</th><th>入れる内容</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="bold">運営サイト名</td>
+              <td>アカウント名で構いません<br />
+                  <span class="mono">${escapeHtml(account().name || accountId)}</span></td>
+            </tr>
+            <tr>
+              <td class="bold">運営サイトURL</td>
+              <td><span class="mono break-all">${escapeHtml(threadsUrl(account().threads_username) || "（前の画面で入力してください）")}</span></td>
+            </tr>
+            <tr>
+              <td class="bold">順位</td>
+              <td>そのままで構いません</td>
+            </tr>
+            <tr>
+              <td class="bold">運営サイトのジャンル</td>
+              <td>任意（空でも登録できます）</td>
+            </tr>
+            <tr>
+              <td class="bold">扱う商品ジャンル</td>
+              <td>任意（空でも登録できます）</td>
+            </tr>
+          </tbody>
+        </table>
+
+        ${threadsUrl(account().threads_username) ? `<p class="mt-3">
+          <button type="button" id="wiz-copy-url2" class="btn-ghost btn-sm">URLをコピー</button>
+        </p>` : ""}
+
+        <p class="small mt-3">
+          入力できたら「<strong>サイト情報を登録する</strong>」を押してください。
+        </p>`,
+      setup: (root) => {
+        root.querySelector("#wiz-copy-url2")?.addEventListener("click", () =>
+          copyText(threadsUrl(account().threads_username)));
+      },
+    },
+    {
+      key: "finish",
+      title: "登録を完了にする",
+      lead: "楽天側での登録が終わったら、ここに印を付けておきます。",
+      done: () => Boolean(account().rakuten_site_registered),
+      body: () => `
+        <p class="small">
+          この印は管理画面の覚え書きです。どのアカウントの登録が済んでいるかを
+          一覧で確認できるようになります。
+        </p>
+        <label class="check mt-3">
+          <input type="checkbox" id="wiz-registered"
+                 ${account().rakuten_site_registered ? "checked" : ""} />
+          <span>楽天アフィリエイトへのサイト登録を済ませた</span>
+        </label>
+        <p class="mt-3">
+          <button type="button" id="wiz-save-registered" class="btn-primary btn-sm">保存する</button>
+        </p>
+        <div class="alert-warn mt-3">
+          楽天側の審査や反映に時間がかかる場合があります。
+          登録直後にリンクが機能しなくても、しばらく待ってから確認してください。
+        </div>`,
+      setup: (root) => {
+        root.querySelector("#wiz-save-registered").addEventListener("click", async (event) => {
+          const button = event.currentTarget;
+          const checked = root.querySelector("#wiz-registered").checked;
+          const index = state.accounts.findIndex((a) => a.id === accountId);
+          if (index < 0) return;
+          const backup = [...state.accounts];
+          button.disabled = true;
+          button.textContent = "保存中...";
+          try {
+            state.accounts[index] = { ...state.accounts[index], rakuten_site_registered: checked };
+            await saveAccounts(`chore(accounts): rakuten site registration for ${accountId}`);
+            toast("保存しました", "success");
+            renderWizard();
+          } catch (error) {
+            state.accounts = backup;
+            toast(`保存に失敗しました: ${error.message}`, "error");
+          } finally {
+            button.disabled = false;
+            button.textContent = "保存する";
+          }
+        });
+      },
+    },
+  ];
+}
+
 /** クリップボードへコピーする。使えない環境では選択状態にして手動コピーを促す。 */
 async function copyText(value, fallbackInput) {
   try {
@@ -1339,11 +1568,17 @@ async function copyText(value, fallbackInput) {
   }
 }
 
-function openSetupWizard(index = 0) {
+/** 手順の一覧を渡してウィザードを開く（Threadsアプリ設定／楽天サイト登録で使い回す）。 */
+function openWizard(steps, index = 0) {
+  state.wizSteps = steps;
   state.wizStep = index;
   $("#setup-modal").classList.remove("hidden");
   document.body.style.overflow = "hidden";
   renderWizard();
+}
+
+function openSetupWizard(index = 0) {
+  openWizard(SETUP_STEPS, index);
 }
 
 function closeSetupWizard() {
@@ -1353,16 +1588,17 @@ function closeSetupWizard() {
 }
 
 function renderWizard() {
-  const total = SETUP_STEPS.length;
+  const steps = state.wizSteps || SETUP_STEPS;
+  const total = steps.length;
   const index = Math.max(0, Math.min(state.wizStep ?? 0, total - 1));
   state.wizStep = index;
-  const step = SETUP_STEPS[index];
+  const step = steps[index];
   const body = $("#setup-body");
 
   // 上部: 進捗
   $("#setup-count").textContent =
     `${index + 1} / ${total}${step.done?.() ? "　✓ 入力済み" : ""}`;
-  $("#setup-dots").innerHTML = SETUP_STEPS.map((_, i) =>
+  $("#setup-dots").innerHTML = steps.map((_, i) =>
     `<span class="wiz-dot ${i < index ? "on" : ""} ${i === index ? "now" : ""}"></span>`).join("");
 
   // 中央: この画面でやること
@@ -1645,7 +1881,20 @@ function renderAccounts(root) {
         ${expiryBadge(account.id)}
         <code class="code">${escapeHtml(secretName)}</code>
       </div>
+      <div class="row wrap gap-xs tiny">
+        <span class="sub">楽天へのサイト登録:</span>
+        <span class="badge ${account.rakuten_site_registered ? "badge-sent" : "badge-expired"}">
+          ${account.rakuten_site_registered ? "登録済み" : "未登録"}
+        </span>
+        ${account.threads_username
+          ? `<code class="code break-all">${escapeHtml(threadsUrl(account.threads_username))}</code>`
+          : '<span class="sub">ユーザーネーム未設定</span>'}
+      </div>
+
       <div class="row wrap gap-xs">
+        <button class="btn-ghost btn-sm" data-rakuten="${escapeHtml(account.id)}">
+          ${account.rakuten_site_registered ? "楽天の登録を見直す" : "楽天にサイト登録する"}
+        </button>
         <button class="btn-primary btn-sm" data-connect="${escapeHtml(account.id)}"
                 ${canConnectThreads() ? "" : "disabled"}>
           ${secretStatus(secretName).registered ? "Threadsで再連携" : "Threadsでログイン"}
@@ -1671,6 +1920,9 @@ function renderAccounts(root) {
   `;
 
   $("#add-account")?.addEventListener("click", () => openAccountModal(-1));
+  root.querySelectorAll("[data-rakuten]").forEach((button) => {
+    button.addEventListener("click", () => openWizard(rakutenSiteSteps(button.dataset.rakuten)));
+  });
   root.querySelectorAll("[data-connect]").forEach((button) => {
     button.addEventListener("click", () => startThreadsConnect(button.dataset.connect));
   });
@@ -1729,7 +1981,9 @@ function openAccountModal(index) {
   $("#acc-keywords").value = (account.search_keywords || []).join("\n");
   $("#acc-posts").value = account.posts_per_day || 7;
   $("#acc-affiliate").value = account.rakuten_affiliate_id || "";
+  $("#acc-username").value = account.threads_username || "";
   $("#acc-user-id").value = account.threads_user_id || "";
+  syncThreadsUrlPreview();
   $("#acc-note").value = account.note || "";
   $("#acc-enabled").checked = account.enabled !== false;
   $("#acc-token").value = "";
@@ -1791,7 +2045,16 @@ function setupTokenExchange() {
   update();
 }
 
+/** 入力されたユーザーネームから、登録するURLの見本を出す。 */
+function syncThreadsUrlPreview() {
+  const url = threadsUrl($("#acc-username").value);
+  $("#acc-threads-url").innerHTML = url
+    ? `<strong>登録するURL：</strong><span class="mono break-all">${escapeHtml(url)}</span>`
+    : '<span class="sub">ユーザーネームを入れると、登録するURLがここに出ます</span>';
+}
+
 function setupAccountModal() {
+  $("#acc-username").addEventListener("input", syncThreadsUrlPreview);
   setupTokenExchange();
   $("#account-modal-close").addEventListener("click", closeAccountModal);
   $("#account-cancel").addEventListener("click", closeAccountModal);
@@ -1844,6 +2107,10 @@ function setupAccountModal() {
       target: $("#acc-target").value.trim(),
       search_keywords: $("#acc-keywords").value
         .split(/[\n,、]+/).map((k) => k.trim()).filter(Boolean),
+      threads_username: $("#acc-username").value.replace(/^@/, "").trim(),
+      rakuten_site_registered: isNew
+        ? false
+        : Boolean(state.accounts[index]?.rakuten_site_registered),
       threads_user_id: $("#acc-user-id").value.trim(),
       posts_per_day: Number($("#acc-posts").value) || 7,
       rakuten_affiliate_id: $("#acc-affiliate").value.trim(),
