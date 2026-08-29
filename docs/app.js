@@ -247,7 +247,10 @@ function toast(message, type = "info") {
   const node = document.createElement("div");
   node.className = `toast toast-${type}`;
   node.textContent = message;
-  $("#toast-area").appendChild(node);
+  const area = $("#toast-area");
+  area.appendChild(node);
+  // 続けて操作すると積み上がって画面を覆うため、古いものから消す
+  while (area.children.length > 3) area.firstElementChild.remove();
   setTimeout(() => {
     node.style.transition = "opacity .3s";
     node.style.opacity = "0";
@@ -1354,43 +1357,46 @@ function renderWizard() {
   const index = Math.max(0, Math.min(state.wizStep ?? 0, total - 1));
   state.wizStep = index;
   const step = SETUP_STEPS[index];
-  const root = $("#setup-body");
+  const body = $("#setup-body");
 
-  root.innerHTML = `
-    <div class="wiz-head">
-      <div class="wiz-count">${index + 1} / ${total}${step.done?.() ? "　✓ 入力済み" : ""}</div>
-      <h3 class="wiz-title">${escapeHtml(step.title)}</h3>
-      <div class="wiz-dots">
-        ${SETUP_STEPS.map((_, i) =>
-          `<span class="wiz-dot ${i < index ? "on" : ""} ${i === index ? "now" : ""}"></span>`).join("")}
-      </div>
-    </div>
+  // 上部: 進捗
+  $("#setup-count").textContent =
+    `${index + 1} / ${total}${step.done?.() ? "　✓ 入力済み" : ""}`;
+  $("#setup-dots").innerHTML = SETUP_STEPS.map((_, i) =>
+    `<span class="wiz-dot ${i < index ? "on" : ""} ${i === index ? "now" : ""}"></span>`).join("");
 
-    <div class="mt-3">
-      <p class="small">${escapeHtml(step.lead)}</p>
-      <div class="mt-3">${step.body()}</div>
-    </div>
-
-    <div class="wiz-foot mt-3">
-      <button type="button" id="wiz-prev" class="btn-ghost" ${index === 0 ? "disabled" : ""}>戻る</button>
-      <span class="grow"></span>
-      ${index === total - 1
-        ? `<button type="button" id="wiz-finish" class="btn-ghost">閉じる</button>`
-        : `<button type="button" id="wiz-next" class="btn-primary">次へ</button>`}
-    </div>
+  // 中央: この画面でやること
+  body.innerHTML = `
+    <h3 class="wiz-title">${escapeHtml(step.title)}</h3>
+    <p class="small mt-2">${escapeHtml(step.lead)}</p>
+    <div class="mt-3">${step.body()}</div>
   `;
 
-  step.setup?.(root);
-  root.querySelector("#wiz-prev")?.addEventListener("click", () => { state.wizStep -= 1; renderWizard(); });
-  root.querySelector("#wiz-next")?.addEventListener("click", () => { state.wizStep += 1; renderWizard(); });
-  root.querySelector("#wiz-finish")?.addEventListener("click", closeSetupWizard);
-  root.scrollIntoView?.({ block: "start" });
+  // 下部: 移動
+  $("#setup-foot").innerHTML = `
+    <button type="button" id="wiz-prev" class="btn-ghost" ${index === 0 ? "disabled" : ""}>戻る</button>
+    <span class="grow"></span>
+    ${index === total - 1
+      ? `<button type="button" id="wiz-finish" class="btn-ghost">閉じる</button>`
+      : `<button type="button" id="wiz-next" class="btn-primary">次へ</button>`}
+  `;
+
+  step.setup?.(body);
+  $("#wiz-prev")?.addEventListener("click", () => { state.wizStep -= 1; renderWizard(); });
+  $("#wiz-next")?.addEventListener("click", () => { state.wizStep += 1; renderWizard(); });
+  $("#wiz-finish")?.addEventListener("click", closeSetupWizard);
+
+  // 画面が変わったら先頭から読ませる
+  $("#setup-scroll").scrollTop = 0;
 }
 
 function setupWizard() {
   $("#setup-close").addEventListener("click", closeSetupWizard);
-  $("#setup-modal").addEventListener("click", (event) => {
-    if (event.target === $("#setup-modal")) closeSetupWizard();
+  // 画面全体を使うため、外側をタップして閉じる動作は設けない（誤操作を防ぐ）
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !$("#setup-modal").classList.contains("hidden")) {
+      closeSetupWizard();
+    }
   });
 }
 

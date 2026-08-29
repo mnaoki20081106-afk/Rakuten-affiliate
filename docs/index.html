@@ -325,14 +325,25 @@
 </div>
 
 <!-- ================= Threads連携の設定ウィザード ================= -->
-<div id="setup-modal" class="hidden overlay">
-  <div class="sheet">
-    <div class="sheet-head">
-      <h2 class="h3">Threads連携の準備</h2>
-      <button id="setup-close" class="btn-icon" aria-label="閉じる">✕</button>
+<!-- ダイアログではなく画面全体を使う。背景が見えていると集中できないため -->
+<div id="setup-modal" class="hidden wizard">
+  <header class="wizard-bar">
+    <div class="wizard-inner wizard-bar-row">
+      <span id="setup-count" class="wiz-count"></span>
+      <button id="setup-close" class="btn-icon" aria-label="設定を閉じる">✕</button>
     </div>
-    <div id="setup-body" class="sheet-body"></div>
+    <div class="wizard-inner">
+      <div id="setup-dots" class="wiz-dots"></div>
+    </div>
+  </header>
+
+  <div class="wizard-scroll" id="setup-scroll">
+    <div class="wizard-inner" id="setup-body"></div>
   </div>
+
+  <footer class="wizard-foot">
+    <div class="wizard-inner wizard-foot-row" id="setup-foot"></div>
+  </footer>
 </div>
 
 <div id="toast-area"></div>
