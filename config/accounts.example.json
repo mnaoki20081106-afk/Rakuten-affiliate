@@ -1,4 +1,5 @@
 {
+  "_comment": "このファイルは記入例です。実際の設定は config/accounts.json に管理画面から保存されます。機密情報（アクセストークン・APIキー）は絶対にここへ書かないでください。すべて GitHub Secrets に保存されます。",
   "accounts": [
     {
       "id": "beauty_lab",
@@ -11,11 +12,9 @@
       "target": "20代後半〜30代前半、肌荒れと出費のバランスに悩む会社員",
       "search_keywords": ["プチプラ スキンケア", "毛穴 化粧水", "保湿 クリーム"],
       "threads_user_id": "",
-      "threads_access_token": "",
-      "threads_token_env": "THREADS_TOKEN_BEAUTY_LAB",
       "posts_per_day": 7,
       "rakuten_affiliate_id": "",
-      "note": "トークンは GitHub Secrets に登録し、threads_token_env で参照する"
+      "note": "Threads のアクセストークンは GitHub Secrets の THREADS_TOKEN_BEAUTY_LAB に保存される"
     }
   ]
 }

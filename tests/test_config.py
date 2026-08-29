@@ -2,7 +2,13 @@
 
 import json
 
-from src.config import Account, apply_secret_bundle, load_accounts, load_settings, save_accounts
+from src.config import (
+    Account,
+    find_secret_fields,
+    load_accounts,
+    load_settings,
+    save_accounts,
+)
 
 
 def test_テーマはジャンルと世界観と強みから組み立てられる():
@@ -29,12 +35,16 @@ def test_キーワード未設定ならジャンルが使われる():
     assert Account(name="t", genre="美容").keywords == ["美容"]
 
 
-def test_トークンは環境変数を優先する():
-    account = Account(id="a1", name="t", threads_access_token="平文", threads_token_env="TOK_A")
-    assert account.resolve_token({}) == "平文"
-    assert account.resolve_token({"TOK_A": "環境変数"}) == "環境変数"
-    # 既定名の環境変数でも解決できる
-    assert Account(id="a1", name="t").resolve_token({"THREADS_TOKEN_A1": "既定名"}) == "既定名"
+def test_トークンはSecrets由来の環境変数からのみ解決される():
+    account = Account(id="beauty_lab", name="t")
+    assert account.token_secret_name == "THREADS_TOKEN_BEAUTY_LAB"
+    assert account.resolve_token({"THREADS_TOKEN_BEAUTY_LAB": "秘密"}) == "秘密"
+    assert account.resolve_token({}) == ""
+
+
+def test_Accountにトークンを保持するフィールドが存在しない():
+    fields = set(Account.__dataclass_fields__)
+    assert not fields & {"threads_access_token", "access_token", "token", "api_key"}
 
 
 def test_アカウントの保存と読み込み(tmp_path):
@@ -62,23 +72,39 @@ def test_設定は既定値とマージされる(tmp_path):
     assert settings["active_hours"]["start"] == "07:00"
 
 
-def test_ALL_SECRETSからThreadsトークンだけを取り込む():
-    env = {
-        "ALL_SECRETS": json.dumps(
-            {"THREADS_TOKEN_A": "a", "THREADS_TOKEN_B": "b", "ANTHROPIC_API_KEY": "秘密"}
-        )
-    }
-    assert apply_secret_bundle(env) == 2
-    assert env["THREADS_TOKEN_A"] == "a"
-    assert "ANTHROPIC_API_KEY" not in env
+def test_accounts_jsonに混入した機密情報を検出する(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(
+        json.dumps({"accounts": [
+            {"id": "leaky", "name": "x", "threads_access_token": "THDS_xxxxx"},
+            {"id": "clean", "name": "y"},
+        ]}),
+        encoding="utf-8",
+    )
+    assert find_secret_fields(path) == ["leaky.threads_access_token"]
 
 
-def test_既存の環境変数は上書きしない():
-    env = {"ALL_SECRETS": json.dumps({"THREADS_TOKEN_A": "新"}), "THREADS_TOKEN_A": "既存"}
-    assert apply_secret_bundle(env) == 0
-    assert env["THREADS_TOKEN_A"] == "既存"
+def test_空文字のトークン欄は検出しない(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(json.dumps({"accounts": [{"id": "a", "name": "x", "token": ""}]}), encoding="utf-8")
+    assert find_secret_fields(path) == []
 
 
-def test_ALL_SECRETSが壊れていても例外にならない():
-    assert apply_secret_bundle({"ALL_SECRETS": "not json"}) == 0
-    assert apply_secret_bundle({}) == 0
+def test_旧形式のトークンは読み込み時に破棄される(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text(
+        json.dumps({"accounts": [{"id": "a1", "name": "x", "threads_access_token": "THDS_leaked"}]}),
+        encoding="utf-8",
+    )
+    account = load_accounts(path)[0]
+    assert not hasattr(account, "threads_access_token")
+    assert "THDS_leaked" not in json.dumps(account.to_dict(), ensure_ascii=False)
+
+
+def test_保存したaccounts_jsonに機密情報が含まれない(tmp_path):
+    path = tmp_path / "accounts.json"
+    save_accounts([Account(id="a1", name="テスト", genre="美容")], path)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    for account in saved["accounts"]:
+        assert not set(account) & {"threads_access_token", "access_token", "token", "api_key"}
+    assert find_secret_fields(path) == []

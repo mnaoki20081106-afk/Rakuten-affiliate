@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from src import config as cfg
-from src.config import apply_secret_bundle, find_account, load_accounts, load_settings
+from src.config import find_account, load_accounts, load_settings
 from src.scheduler import parse_iso, to_jst
 from src.storage import read_json, write_json
 from src.threads_api import ThreadsAPIError, ThreadsClient, build_pr_reply, is_dry_run
@@ -190,6 +190,11 @@ def run(
                 if account is None:
                     raise ThreadsAPIError(f"アカウント定義が見つかりません: {acc_id}")
                 token = account.resolve_token()
+                if not token and not (is_dry_run() if dry_run is None else dry_run):
+                    raise ThreadsAPIError(
+                        f"Threads トークンが未設定です。GitHub Secrets に "
+                        f"{account.token_secret_name} を登録してください"
+                    )
                 clients[acc_id] = ThreadsClient(
                     access_token=token,
                     user_id=account.threads_user_id,
@@ -238,9 +243,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         level=getattr(logging, str(args.log_level).upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    applied = apply_secret_bundle()
-    if applied:
-        logger.info("ALL_SECRETS から %s 件のトークンを読み込みました", applied)
     summary = run(
         now_utc=parse_iso(args.now) if args.now else None,
         data_dir=Path(args.data_dir),

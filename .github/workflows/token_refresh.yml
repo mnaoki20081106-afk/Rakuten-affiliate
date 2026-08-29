@@ -1,0 +1,62 @@
+# このファイルは src/batch_generator.py によって自動生成されます。手動で編集しないでください。
+# 【トークン自動更新】Threads の長寿命アクセストークン（有効期限 60 日）を延長する。
+# 毎週実行するため、失効までに 8 回以上やり直しの機会がある。
+# 更新後のトークンは GitHub Secrets へ暗号化して保存し直されるので手作業は不要。
+# 生成日時 (UTC): (バッチ未実行)
+name: Token Refresh
+
+on:
+  schedule:
+    - cron: "0 19 * * 0"  # 毎週月曜 JST 04:00（日曜 UTC 19:00）
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "外部 API を呼ばずに動作確認する"
+        type: boolean
+        default: false
+      force:
+        description: "直近に更新済みでも強制的に更新する"
+        type: boolean
+        default: false
+
+concurrency:
+  group: token-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Check WORKFLOW_TOKEN
+        run: |
+          if [ -z "${{ secrets.WORKFLOW_TOKEN }}" ]; then
+            echo "::error::WORKFLOW_TOKEN が未設定です。Secrets を書き換えられないため更新できません。"
+            exit 1
+          fi
+      - name: Refresh Threads long-lived tokens
+        env:
+          PYTHONUNBUFFERED: "1"
+          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          # トークンはリポジトリに保存せず、実行時に GitHub Secrets から注入する
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          python -m src.token_refresher $ARGS
+      - name: Commit & push state
+        if: always()
+        run: 'bash scripts/commit_and_push.sh "chore: refresh threads tokens"'

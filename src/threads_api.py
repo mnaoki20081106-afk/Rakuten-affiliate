@@ -13,6 +13,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://graph.threads.net/v1.0"
+# トークンの交換・更新はバージョン無しのルートに対して行う
+GRAPH_ROOT = "https://graph.threads.net"
 ENV_DRY_RUN = "DRY_RUN"
 
 
@@ -177,6 +179,54 @@ class ThreadsClient:
                 except (TypeError, ValueError):
                     result[name] = 0
         return result
+
+
+def refresh_long_lived_token(
+    access_token: str,
+    session: requests.Session | None = None,
+    timeout: int = 30,
+    retries: int = 3,
+) -> dict[str, Any]:
+    """長寿命アクセストークンを更新し、新しいトークンと有効期間を返す。
+
+    Threads API の仕様上、対象のトークンは
+    「発行から 24 時間以上経過していて、かつ未失効」である必要がある。
+    戻り値: ``{"access_token": str, "expires_in": int}``
+    """
+    session = session or requests.Session()
+    params = {"grant_type": "th_refresh_token", "access_token": access_token}
+    last_error: Exception | None = None
+
+    for attempt in range(retries):
+        try:
+            resp = session.get(
+                f"{GRAPH_ROOT}/refresh_access_token", params=params, timeout=timeout
+            )
+            if resp.status_code >= 400:
+                detail = resp.text[:400]
+                # 4xx は失効・権限不足など、再試行しても回復しない
+                if resp.status_code < 500 and resp.status_code != 429:
+                    raise ThreadsAPIError(f"HTTP {resp.status_code}: {detail}")
+                raise requests.RequestException(f"HTTP {resp.status_code}: {detail}")
+
+            data = resp.json()
+            token = str(data.get("access_token", ""))
+            if not token:
+                raise ThreadsAPIError(f"新しいトークンを取得できませんでした: {data}")
+            return {
+                "access_token": token,
+                "expires_in": int(data.get("expires_in", 0) or 0),
+                "token_type": str(data.get("token_type", "")),
+            }
+        except ThreadsAPIError:
+            raise
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            logger.warning("トークン更新に失敗 (%s/%s): %s", attempt + 1, retries, exc)
+            if attempt < retries - 1:
+                time.sleep(2 ** attempt)
+
+    raise ThreadsAPIError(f"トークンの更新に失敗しました: {last_error}")
 
 
 def build_pr_reply(affiliate_url: str, pr_text: str = "※PR", lead: str = "") -> str:

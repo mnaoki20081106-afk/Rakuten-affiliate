@@ -122,7 +122,7 @@ def test_ドライランで実行するとキューと履歴が更新される(t
     (data_dir / "post_history.json").write_text('{"posts": []}', encoding="utf-8")
     accounts_file = tmp_path / "accounts.json"
     accounts_file.write_text(
-        json.dumps({"accounts": [{"id": "a1", "name": "テスト", "threads_access_token": "t"}]}),
+        json.dumps({"accounts": [{"id": "a1", "name": "テスト"}]}),
         encoding="utf-8",
     )
 

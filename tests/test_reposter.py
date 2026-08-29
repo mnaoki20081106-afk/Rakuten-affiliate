@@ -41,7 +41,7 @@ def _setup(tmp_path, likes):
     )
     accounts_file = tmp_path / "accounts.json"
     accounts_file.write_text(
-        json.dumps({"accounts": [{"id": "a1", "name": "テスト", "threads_access_token": "t"}]}),
+        json.dumps({"accounts": [{"id": "a1", "name": "テスト"}]}),
         encoding="utf-8",
     )
     return data_dir, accounts_file

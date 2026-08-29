@@ -32,6 +32,7 @@ jobs:
       - name: Publish scheduled posts
         env:
           PYTHONUNBUFFERED: "1"
+          # トークンはリポジトリに保存せず、実行時に GitHub Secrets から注入する
         run: python -m src.publisher
       - name: Commit & push state
         run: 'bash scripts/commit_and_push.sh "chore: publish scheduled posts"'

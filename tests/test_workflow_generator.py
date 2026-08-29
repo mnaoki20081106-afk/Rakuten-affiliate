@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import yaml
 
+from src.config import Account
 from src.workflow_generator import (
     collect_schedule_times,
     generate_publisher_workflows,
+    generate_reposter_workflow,
     iter_queue_posts,
     workflow_filename,
 )
@@ -65,14 +67,48 @@ def test_同一分の予定は1つのcronにまとめられる(tmp_path):
     assert result["cron_count"] == 2
 
 
-def test_アカウントのシークレット名が環境変数として埋め込まれる(tmp_path):
-    generate_publisher_workflows(
-        _times(2), tmp_path, secret_names=["THREADS_TOKEN_A", "THREADS_TOKEN_B"]
-    )
-    data = yaml.safe_load((tmp_path / "publisher.yml").read_text(encoding="utf-8"))
-    env = data["jobs"]["publish"]["steps"][3]["env"]
-    assert env["THREADS_TOKEN_A"] == "${{ secrets.THREADS_TOKEN_A }}"
-    assert env["THREADS_TOKEN_B"] == "${{ secrets.THREADS_TOKEN_B }}"
+def _env_of(path):
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    job = next(iter(data["jobs"].values()))
+    return next(step for step in job["steps"] if "env" in step)["env"]
+
+
+def test_アカウントごとのシークレットが索引記法で参照される(tmp_path):
+    accounts = [Account(id="beauty_lab", name="a"), Account(id="gadget_note", name="b")]
+    generate_publisher_workflows(_times(2), tmp_path, accounts=accounts)
+    env = _env_of(tmp_path / "publisher.yml")
+    # シークレット名はアカウントIDから動的に決まる
+    assert env["THREADS_TOKEN_BEAUTY_LAB"] == "${{ secrets['THREADS_TOKEN_BEAUTY_LAB'] }}"
+    assert env["THREADS_TOKEN_GADGET_NOTE"] == "${{ secrets['THREADS_TOKEN_GADGET_NOTE'] }}"
+
+
+def test_生成YAMLにトークンの実体が現れない(tmp_path):
+    accounts = [Account(id="beauty_lab", name="a")]
+    generate_publisher_workflows(_times(2), tmp_path, accounts=accounts)
+    generate_reposter_workflow(accounts, tmp_path)
+    for name in ("publisher.yml", "reposter.yml"):
+        text = (tmp_path / name).read_text(encoding="utf-8")
+        # 参照だけが書かれ、値は GitHub が実行時に解決する
+        assert "secrets['THREADS_TOKEN_BEAUTY_LAB']" in text
+        assert "THDS_" not in text and "ghp_" not in text
+
+
+def test_再投稿ワークフローも同じシークレット参照で生成される(tmp_path):
+    accounts = [Account(id="a1", name="a"), Account(id="a2", name="b")]
+    generate_reposter_workflow(accounts, tmp_path)
+    data = yaml.safe_load((tmp_path / "reposter.yml").read_text(encoding="utf-8"))
+    assert data["name"] == "Reposter"
+    assert data[True]["schedule"] == [{"cron": "30 10 * * 1,3,5"}]  # JST 月水金 19:30
+    env = _env_of(tmp_path / "reposter.yml")
+    assert set(env) >= {"THREADS_TOKEN_A1", "THREADS_TOKEN_A2"}
+
+
+def test_アカウントが増減しても参照が追随する(tmp_path):
+    generate_reposter_workflow([Account(id="a1", name="a")], tmp_path)
+    assert "THREADS_TOKEN_A1" in _env_of(tmp_path / "reposter.yml")
+    generate_reposter_workflow([Account(id="a2", name="b")], tmp_path)
+    env = _env_of(tmp_path / "reposter.yml")
+    assert "THREADS_TOKEN_A2" in env and "THREADS_TOKEN_A1" not in env
 
 
 def test_queueから未送信の配信時刻だけを集める():
