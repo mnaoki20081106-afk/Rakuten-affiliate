@@ -31,6 +31,7 @@ const PATHS = {
   history: "data/post_history.json",
   used: "data/used_items.json",
   runLog: "data/run_log.json",
+  tokenStatus: "data/token_status.json",
   prompt: "prompts/Claude×アフィリエイト投稿作成プロンプト.txt",
 };
 
@@ -121,6 +122,7 @@ const state = {
   history: { posts: [] },
   used: { accounts: {} },
   runLog: {},
+  tokenStatus: { accounts: {} },
   prompt: "",
   secrets: new Map(),    // 登録済みシークレット名 → { updated_at }
   secretsReadable: true, // 一覧を取得できたか（権限不足なら false）
@@ -395,6 +397,27 @@ function secretStatus(name) {
   return { known: true, registered: Boolean(entry), updatedAt: entry?.updated_at };
 }
 
+/** data/token_status.json から、そのアカウントのトークン有効期限の状況を求める。 */
+function tokenExpiry(accountId) {
+  const entry = state.tokenStatus?.accounts?.[accountId];
+  if (!entry?.expires_at) return null;
+  const expires = new Date(entry.expires_at);
+  if (Number.isNaN(expires.getTime())) return null;
+  const days = Math.floor((expires - Date.now()) / 86400000);
+  return { days, expiresAt: entry.expires_at, status: entry.status, error: entry.error || "" };
+}
+
+/** 残り日数に応じた注意バッジ。トークン更新が止まっていることに気付けるようにする。 */
+function expiryBadge(accountId) {
+  const expiry = tokenExpiry(accountId);
+  if (!expiry) return "";
+  if (expiry.days <= 0) {
+    return '<span class="badge badge-failed">期限切れ</span>';
+  }
+  const cls = expiry.days <= 14 ? "badge-expired" : "badge-pending";
+  return `<span class="badge ${cls}">残り ${escapeHtml(expiry.days)} 日</span>`;
+}
+
 function secretBadge(name) {
   const status = secretStatus(name);
   if (!status.known) return '<span class="badge badge-pending">状態不明</span>';
@@ -476,13 +499,14 @@ async function reloadAll() {
   $("#loading").classList.remove("hidden");
   $$(".view").forEach((el) => el.classList.add("hidden"));
   try {
-    const [accountsRaw, settingsRaw, queue, history, used, runLog, prompt] = await Promise.all([
+    const [accountsRaw, settingsRaw, queue, history, used, runLog, tokenStatus, prompt] = await Promise.all([
       getJson(PATHS.accounts, { accounts: [] }),
       getJson(PATHS.settings, {}),
       getJson(PATHS.queue, {}),
       getJson(PATHS.history, { posts: [] }),
       getJson(PATHS.used, { accounts: {} }),
       getJson(PATHS.runLog, {}),
+      getJson(PATHS.tokenStatus, { accounts: {} }),
       getFile(PATHS.prompt),
       loadSecrets(),
     ]);
@@ -494,6 +518,7 @@ async function reloadAll() {
     state.history = history?.posts ? history : { posts: [] };
     state.used = used?.accounts ? used : { accounts: {} };
     state.runLog = runLog || {};
+    state.tokenStatus = tokenStatus?.accounts ? tokenStatus : { accounts: {} };
     state.prompt = prompt ?? "";
   } catch (error) {
     toast(`読み込みに失敗しました: ${error.message}`, "error");
@@ -632,6 +657,23 @@ function renderDashboard(root) {
   const errors = state.runLog?.errors || [];
   const workflows = state.runLog?.workflows;
 
+  const tokenWarnings = state.accounts
+    .filter((account) => account.enabled)
+    .map((account) => ({ account, expiry: tokenExpiry(account.id) }))
+    .filter(({ expiry }) => expiry && (expiry.days <= 14 || expiry.status === "failed"));
+
+  const tokenBanner = tokenWarnings.length
+    ? `<div class="alert-error">
+         <strong>Threadsトークンの期限が近づいています。</strong>
+         ${escapeHtml(tokenWarnings.map(({ account, expiry }) =>
+           expiry.days <= 0
+             ? `${account.name || account.id}: 期限切れ`
+             : `${account.name || account.id}: 残り${expiry.days}日`).join(" / "))}<br />
+         GitHubの Actions タブ →「Token Refresh」→ Run workflow で更新を試してください。
+         それでも直らない場合は、READMEの手順でトークンを取り直してください。
+       </div>`
+    : "";
+
   const banner = errors.length
     ? `<div class="alert-error">直近のバッチで ${errors.length} 件のエラーが発生しました:
         ${escapeHtml(errors.map((e) => `${e.account_id}: ${e.error}`).join(" / "))}</div>`
@@ -644,6 +686,7 @@ function renderDashboard(root) {
 
   root.innerHTML = `
     ${banner}
+    ${tokenBanner}
     ${renderSetupChecklist()}
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
       ${statCard(state.accounts.filter((a) => a.enabled).length, "有効なアカウント")}
@@ -820,14 +863,17 @@ function renderSecrets(root) {
     <div class="card p-4">
       <h3 class="font-bold text-sm mb-2">各アカウントのThreadsトークン</h3>
       <p class="text-xs text-muted mb-3">
-        アカウントごとのトークンは「アカウント管理」タブの各アカウントの編集画面から登録します。
+        アカウントごとのトークンは「アカウント管理」タブの各アカウントの編集画面から登録します。<br />
+        登録後は毎週日曜に自動で有効期限が延長されるため、通常は手作業での更新は不要です
+        （Actions タブの「Token Refresh」から手動実行もできます）。
       </p>
       ${state.accounts.length ? `<div class="table-wrap"><table class="data">
-        <thead><tr><th>アカウント</th><th>シークレット名</th><th>状態</th></tr></thead>
+        <thead><tr><th>アカウント</th><th>シークレット名</th><th>状態</th><th>有効期限</th></tr></thead>
         <tbody>${state.accounts.map((account) => `<tr>
           <td>${escapeHtml(account.name || account.id)}</td>
           <td><code class="code">${escapeHtml(tokenSecretName(account.id))}</code></td>
           <td>${secretBadge(tokenSecretName(account.id))}</td>
+          <td>${expiryBadge(account.id) || '<span class="text-muted text-xs">未更新</span>'}</td>
         </tr>`).join("")}</tbody>
       </table></div>` : '<p class="text-sm text-muted">アカウントが未登録です。</p>'}
     </div>
@@ -893,6 +939,7 @@ function renderAccounts(root) {
       <div class="flex flex-wrap items-center gap-2 text-xs">
         <span class="text-muted">Threadsトークン:</span>
         ${secretBadge(secretName)}
+        ${expiryBadge(account.id)}
         <code class="code">${escapeHtml(secretName)}</code>
       </div>
     </div>`;

@@ -27,6 +27,7 @@ QUEUE_FILE = DATA_DIR / "queue.json"
 USED_ITEMS_FILE = DATA_DIR / "used_items.json"
 POST_HISTORY_FILE = DATA_DIR / "post_history.json"
 RUN_LOG_FILE = DATA_DIR / "run_log.json"
+TOKEN_STATUS_FILE = DATA_DIR / "token_status.json"
 POST_PROMPT_FILE = PROMPT_DIR / "Claude×アフィリエイト投稿作成プロンプト.txt"
 
 # 環境変数名

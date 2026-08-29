@@ -71,3 +71,14 @@ jobs:
             --data-dir /tmp/smoke/data --accounts-file /tmp/smoke/accounts.json --log-level WARNING
           python -m src.reposter --dry-run --skip-insights \
             --data-dir /tmp/smoke/data --accounts-file /tmp/smoke/accounts.json --log-level WARNING
+          python -m src.token_refresher --dry-run \
+            --data-dir /tmp/smoke/data --accounts-file /tmp/smoke/accounts.json \
+            --settings-file config/settings.json --log-level WARNING
+          python - <<'PY'
+          import json
+          status = json.load(open("/tmp/smoke/data/token_status.json", encoding="utf-8"))
+          assert status["accounts"], "トークン状態が記録されていない"
+          text = json.dumps(status, ensure_ascii=False)
+          assert "THQ" not in text and "ghp_" not in text, "状態ファイルに機密が混入"
+          print("トークン更新のドライラン:", len(status["accounts"]), "件")
+          PY

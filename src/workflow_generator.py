@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 MAX_CRON_PER_FILE = 60
 REPOSTER_CRON = "30 10 * * 1,3,5"  # JST 月・水・金 19:30
 REPOSTER_FILENAME = "reposter.yml"
+TOKEN_REFRESH_CRON = "0 19 * * 0"  # 毎週月曜 JST 04:00
+TOKEN_REFRESH_FILENAME = "token_refresh.yml"
 GENERATED_HEADER = "# このファイルは src/batch_generator.py によって自動生成されます。手動で編集しないでください。"
 
 
@@ -106,13 +108,41 @@ def _setup_steps(python_version: str) -> list[str]:
     ]
 
 
-def _threads_env_step_lines(accounts: Sequence[Any]) -> list[str]:
-    return [
+def _job_lines(
+    job_id: str,
+    step_name: str,
+    run_lines: Sequence[str],
+    accounts: Sequence[Any],
+    python_version: str,
+    commit_message: str,
+    extra_env: Sequence[str] = (),
+    extra_steps: Sequence[str] = (),
+    commit_always: bool = False,
+) -> list[str]:
+    """3 種類のワークフローで共通のジョブ本体を組み立てる。"""
+    lines = [
+        "jobs:",
+        f"  {job_id}:",
+        "    runs-on: ubuntu-latest",
+        "    permissions:",
+        "      contents: write",
+        "    steps:",
+        *_setup_steps(python_version),
+        *extra_steps,
+        f"      - name: {step_name}",
         "        env:",
         '          PYTHONUNBUFFERED: "1"',
+        *extra_env,
         "          # トークンはリポジトリに保存せず、実行時に GitHub Secrets から注入する",
         *threads_secret_env(accounts),
+        *run_lines,
+        "      - name: Commit & push state",
     ]
+    if commit_always:
+        lines.append("        if: always()")
+    lines.append(f"        run: 'bash scripts/commit_and_push.sh \"{commit_message}\"'")
+    lines.append("")
+    return lines
 
 
 # ----------------------------------------------------------------------
@@ -155,19 +185,14 @@ def render_workflow(
         f"  group: {workflow_name.lower().replace(' ', '-')}",
         "  cancel-in-progress: false",
         "",
-        "jobs:",
-        "  publish:",
-        "    runs-on: ubuntu-latest",
-        "    permissions:",
-        "      contents: write",
-        "    steps:",
-        *_setup_steps(python_version),
-        "      - name: Publish scheduled posts",
-        *_threads_env_step_lines(accounts),
-        "        run: python -m src.publisher",
-        "      - name: Commit & push state",
-        "        run: 'bash scripts/commit_and_push.sh \"chore: publish scheduled posts\"'",
-        "",
+        *_job_lines(
+            job_id="publish",
+            step_name="Publish scheduled posts",
+            run_lines=["        run: python -m src.publisher"],
+            accounts=accounts,
+            python_version=python_version,
+            commit_message="chore: publish scheduled posts",
+        ),
     ]
     return "\n".join(lines)
 
@@ -267,23 +292,20 @@ def render_reposter_workflow(
         "  group: reposter",
         "  cancel-in-progress: false",
         "",
-        "jobs:",
-        "  repost:",
-        "    runs-on: ubuntu-latest",
-        "    permissions:",
-        "      contents: write",
-        "    steps:",
-        *_setup_steps(python_version),
-        "      - name: Repost top posts",
-        *_threads_env_step_lines(accounts),
-        "        run: |",
-        '          ARGS=""',
-        '          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi',
-        '          if [ -n "${{ inputs.rank_index }}" ]; then ARGS="$ARGS --rank-index ${{ inputs.rank_index }}"; fi',
-        "          python -m src.reposter $ARGS",
-        "      - name: Commit & push state",
-        "        run: 'bash scripts/commit_and_push.sh \"chore: repost top posts\"'",
-        "",
+        *_job_lines(
+            job_id="repost",
+            step_name="Repost top posts",
+            run_lines=[
+                "        run: |",
+                '          ARGS=""',
+                '          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi',
+                '          if [ -n "${{ inputs.rank_index }}" ]; then ARGS="$ARGS --rank-index ${{ inputs.rank_index }}"; fi',
+                "          python -m src.reposter $ARGS",
+            ],
+            accounts=accounts,
+            python_version=python_version,
+            commit_message="chore: repost top posts",
+        ),
     ])
 
 
@@ -302,4 +324,93 @@ def generate_reposter_workflow(
     )
     (workflow_dir / filename).write_text(content, encoding="utf-8")
     logger.info("再投稿ワークフローを生成しました: %s (アカウント %s 件)", filename, len(accounts or []))
+    return filename
+
+
+# ----------------------------------------------------------------------
+# トークン自動更新ワークフロー
+# ----------------------------------------------------------------------
+def render_token_refresh_workflow(
+    accounts: Sequence[Any] = (),
+    cron: str = TOKEN_REFRESH_CRON,
+    python_version: str = "3.11",
+    generated_at: str = "",
+) -> str:
+    """Threads の長寿命トークンを延長するワークフローを組み立てる。
+
+    更新には「現在のトークン」が必要なため、配信用と同じくアカウントごとの
+    シークレットを実行時に注入する。更新後の値は Secrets API で上書きされる。
+    """
+    return "\n".join([
+        GENERATED_HEADER,
+        "# 【トークン自動更新】Threads の長寿命アクセストークン（有効期限 60 日）を延長する。",
+        "# 毎週実行するため、失効までに 8 回以上やり直しの機会がある。",
+        "# 更新後のトークンは GitHub Secrets へ暗号化して保存し直されるので手作業は不要。",
+        f"# 生成日時 (UTC): {generated_at or '-'}",
+        "name: Token Refresh",
+        "",
+        "on:",
+        "  schedule:",
+        f'    - cron: "{cron}"  # 毎週月曜 JST 04:00（日曜 UTC 19:00）',
+        "  workflow_dispatch:",
+        "    inputs:",
+        "      dry_run:",
+        '        description: "外部 API を呼ばずに動作確認する"',
+        "        type: boolean",
+        "        default: false",
+        "      force:",
+        '        description: "直近に更新済みでも強制的に更新する"',
+        "        type: boolean",
+        "        default: false",
+        "",
+        "concurrency:",
+        "  group: token-refresh",
+        "  cancel-in-progress: false",
+        "",
+        *_job_lines(
+            job_id="refresh",
+            step_name="Refresh Threads long-lived tokens",
+            run_lines=[
+                "        run: |",
+                '          ARGS=""',
+                '          if [ "${{ inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi',
+                '          if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi',
+                "          python -m src.token_refresher $ARGS",
+            ],
+            accounts=accounts,
+            python_version=python_version,
+            commit_message="chore: refresh threads tokens",
+            # Secrets の上書きには repo 権限を持つ PAT が必要（GITHUB_TOKEN では不可）
+            extra_env=[
+                "          WORKFLOW_TOKEN: ${{ secrets.WORKFLOW_TOKEN }}",
+                "          GITHUB_REPOSITORY: ${{ github.repository }}",
+            ],
+            extra_steps=[
+                "      - name: Check WORKFLOW_TOKEN",
+                "        run: |",
+                '          if [ -z "${{ secrets.WORKFLOW_TOKEN }}" ]; then',
+                '            echo "::error::WORKFLOW_TOKEN が未設定です。Secrets を書き換えられないため更新できません。"',
+                "            exit 1",
+                "          fi",
+            ],
+            commit_always=True,
+        ),
+    ])
+
+
+def generate_token_refresh_workflow(
+    accounts: Sequence[Any],
+    workflow_dir: Path,
+    filename: str = TOKEN_REFRESH_FILENAME,
+    python_version: str = "3.11",
+    generated_at: str = "",
+) -> str:
+    """トークン更新ワークフローを生成・上書きする。"""
+    workflow_dir = Path(workflow_dir)
+    workflow_dir.mkdir(parents=True, exist_ok=True)
+    content = render_token_refresh_workflow(
+        accounts=accounts, python_version=python_version, generated_at=generated_at
+    )
+    (workflow_dir / filename).write_text(content, encoding="utf-8")
+    logger.info("トークン更新ワークフローを生成しました: %s (アカウント %s 件)", filename, len(accounts or []))
     return filename

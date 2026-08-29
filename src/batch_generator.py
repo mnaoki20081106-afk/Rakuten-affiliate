@@ -29,7 +29,11 @@ from src.scheduler import (
     to_utc,
 )
 from src.storage import read_json, write_json
-from src.workflow_generator import generate_publisher_workflows, generate_reposter_workflow
+from src.workflow_generator import (
+    generate_publisher_workflows,
+    generate_reposter_workflow,
+    generate_token_refresh_workflow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -463,6 +467,12 @@ class BatchGenerator:
                 generated_at=queue["generated_at"],
             )
             workflow_result["reposter"] = generate_reposter_workflow(
+                accounts=accounts,
+                workflow_dir=self.workflow_dir,
+                python_version=python_version,
+                generated_at=queue["generated_at"],
+            )
+            workflow_result["token_refresh"] = generate_token_refresh_workflow(
                 accounts=accounts,
                 workflow_dir=self.workflow_dir,
                 python_version=python_version,
