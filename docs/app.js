@@ -24,6 +24,34 @@ const STORAGE_KEY = "sns-admin-auth";
 const API_ROOT = "https://api.github.com";
 const THREADS_TOKEN_PREFIX = "THREADS_TOKEN_";
 
+/** GitHubのトークン作成画面（必要な権限にチェックが入った状態で開く） */
+const TOKEN_NEW_URL = {
+  admin: "https://github.com/settings/tokens/new?scopes=repo&description=sns-admin",
+  workflow: "https://github.com/settings/tokens/new?scopes=repo,workflow&description=sns-workflow",
+};
+
+/** 接続中のリポジトリに対応する各種GitHub画面へのリンク */
+function repoLinks() {
+  const { owner = "", repo = "" } = state.auth || {};
+  const base = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  return {
+    base,
+    actions: `${base}/actions`,
+    batch: `${base}/actions/workflows/batch.yml`,
+    publisher: `${base}/actions/workflows/publisher.yml`,
+    reposter: `${base}/actions/workflows/reposter.yml`,
+    tokenRefresh: `${base}/actions/workflows/token_refresh.yml`,
+    secrets: `${base}/settings/secrets/actions`,
+    pages: `${base}/settings/pages`,
+    actionsSettings: `${base}/settings/actions`,
+  };
+}
+
+/** 外部リンク（新しいタブで開く） */
+function link(href, text) {
+  return `<a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+}
+
 const PATHS = {
   accounts: "config/accounts.json",
   settings: "config/settings.json",
@@ -45,6 +73,12 @@ const GLOBAL_SECRETS = [
     link: "https://console.anthropic.com/",
     linkLabel: "Anthropic Console",
     placeholder: "sk-ant-...",
+    steps: [
+      "Anthropic Console でアカウントを作る",
+      "Billing から少額（$5〜10程度）のクレジットを購入する（これをしないとキーが使えません）",
+      "API Keys → Create Key で発行し、sk-ant- で始まる文字列をコピーする",
+    ],
+    caution: "1アカウント7投稿で1日14回の呼び出しです。まず1アカウントで運用し、Console の Usage で日額を確認してから増やしてください。",
   },
   {
     name: "RAKUTEN_APP_ID",
@@ -54,6 +88,12 @@ const GLOBAL_SECRETS = [
     link: "https://webservice.rakuten.co.jp/",
     linkLabel: "楽天ウェブサービス",
     placeholder: "10000000000000000000",
+    steps: [
+      "楽天ウェブサービスに楽天会員でログインする",
+      "「アプリID発行」を押す",
+      "アプリ名（例: sns-auto）とURL（このリポジトリのURLでOK）を入力する",
+      "発行された数字の羅列をコピーする",
+    ],
   },
   {
     name: "RAKUTEN_AFFILIATE_ID",
@@ -63,6 +103,10 @@ const GLOBAL_SECRETS = [
     link: "https://affiliate.rakuten.co.jp/",
     linkLabel: "楽天アフィリエイト",
     placeholder: "0123abcd.4567efgh...",
+    steps: [
+      "楽天アフィリエイトにログインする",
+      "表示されているアフィリエイトIDをコピーする",
+    ],
   },
   {
     name: "WORKFLOW_TOKEN",
@@ -71,9 +115,15 @@ const GLOBAL_SECRETS = [
     help:
       "翌日分の配信スケジュール（ワークフローファイル）を書き換えるために必要です。" +
       "repo と workflow の両方にチェックを入れて発行したトークンを登録してください。",
-    link: "https://github.com/settings/tokens/new?scopes=repo,workflow&description=sns-workflow",
+    link: TOKEN_NEW_URL.workflow,
     linkLabel: "この設定でトークンを作る",
     placeholder: "ghp_...",
+    steps: [
+      "上のリンクを開く（repo と workflow にチェックが入った状態で開きます）",
+      "画面下部の Generate token を押す",
+      "表示された ghp_ で始まる文字列をコピーする",
+    ],
+    caution: "これが無いと翌日の配信予約を作れず、自動投稿が始まりません。",
   },
 ];
 
@@ -429,11 +479,49 @@ function secretBadge(name) {
 // ======================================================================
 // ログイン
 // ======================================================================
+/**
+ * このページのURLから接続先リポジトリを推測する。
+ * GitHub Pages は https://<オーナー名>.github.io/<リポジトリ名>/ で配信されるため、
+ * フォークした人それぞれの環境に自動で合う。
+ */
 function guessRepoFromUrl() {
   const match = location.hostname.match(/^([^.]+)\.github\.io$/i);
   if (!match) return null;
+  const owner = match[1];
   const segment = location.pathname.split("/").filter(Boolean)[0];
-  return { owner: match[1], repo: segment || `${match[1]}.github.io` };
+  // ユーザーページ（<owner>.github.io）はリポジトリ名も同じ形になる
+  return { owner, repo: segment || `${owner}.github.io` };
+}
+
+/** 接続先の表示と入力欄を同期する。 */
+function syncRepoFields() {
+  const owner = $("#login-owner").value.trim();
+  const repo = $("#login-repo").value.trim();
+  $("#login-repo-detected").textContent = owner && repo ? `${owner} / ${repo}` : "（未設定）";
+}
+
+function setupRepoDetection() {
+  const guessed = guessRepoFromUrl();
+  const fields = $("#login-repo-fields");
+  const note = $("#login-repo-note");
+
+  if (guessed) {
+    $("#login-owner").value = guessed.owner;
+    $("#login-repo").value = guessed.repo;
+    note.textContent = "このページのURLから自動で判定しました。違う場合だけ「変更する」を押してください。";
+  } else {
+    // GitHub Pages 以外（ローカル確認など）では自分で入力してもらう
+    fields.classList.remove("hidden");
+    note.textContent = "このページのURLからは判定できませんでした。接続先を入力してください。";
+  }
+  syncRepoFields();
+
+  $("#login-repo-toggle").addEventListener("click", () => {
+    fields.classList.toggle("hidden");
+    $("#login-repo-toggle").textContent = fields.classList.contains("hidden") ? "変更する" : "閉じる";
+  });
+  $("#login-owner").addEventListener("input", syncRepoFields);
+  $("#login-repo").addEventListener("input", syncRepoFields);
 }
 
 async function verifyAndStart(auth, remember) {
@@ -453,11 +541,7 @@ async function verifyAndStart(auth, remember) {
 }
 
 function setupLogin() {
-  const guessed = guessRepoFromUrl();
-  if (guessed) {
-    $("#login-owner").value = guessed.owner;
-    $("#login-repo").value = guessed.repo;
-  }
+  setupRepoDetection();
 
   $("#login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -575,6 +659,16 @@ function render() {
     prompt: renderPrompt,
   };
   (renderers[state.view] || renderDashboard)(target);
+
+  // 「→ 〇〇タブを開く」形式のリンクで画面を切り替える
+  target.querySelectorAll("[data-goto]").forEach((anchor) => {
+    anchor.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.view = anchor.dataset.goto;
+      render();
+      window.scrollTo({ top: 0 });
+    });
+  });
 }
 
 // ======================================================================
@@ -603,11 +697,12 @@ function renderSetupChecklist() {
     (account) => account.enabled && !secretStatus(tokenSecretName(account.id)).registered
   );
 
+  const links = repoLinks();
   const steps = [
     {
       done: state.accounts.length > 0,
       label: "アカウントを登録する",
-      hint: "「アカウント管理」タブから追加します",
+      hint: "「アカウント管理」タブの ＋追加 から登録します",
     },
     {
       done: state.secretsReadable && missingGlobal.length === 0,
@@ -615,6 +710,7 @@ function renderSetupChecklist() {
       hint: state.secretsReadable
         ? `未登録: ${missingGlobal.map((s) => s.label).join(" / ") || "なし"}`
         : "トークンの権限が足りず状態を確認できません",
+      action: { href: "#secrets", label: "「APIキー」タブを開く" },
     },
     {
       done: state.secretsReadable && state.accounts.length > 0 && accountsWithoutToken.length === 0,
@@ -622,11 +718,13 @@ function renderSetupChecklist() {
       hint: accountsWithoutToken.length
         ? `未登録: ${accountsWithoutToken.map((a) => a.name || a.id).join(" / ")}`
         : "すべて登録済みです",
+      action: { href: "https://developers.facebook.com/", label: "Meta for Developers を開く" },
     },
     {
       done: Boolean(state.runLog?.generated_at),
       label: "バッチを1回実行する",
-      hint: "GitHubの Actions タブ →「Batch Generator」→ Run workflow",
+      hint: "Run workflow を押すと翌日分の投稿が生成されます",
+      action: { href: links.batch, label: "Batch Generator を開く" },
     },
   ];
 
@@ -641,6 +739,12 @@ function renderSetupChecklist() {
         <span class="min-w-0">
           <span class="${step.done ? "sub" : "bold"}">${escapeHtml(step.label)}</span>
           <span class="block tiny">${escapeHtml(step.hint)}</span>
+          ${step.done || !step.action ? "" :
+            `<span class="block small mt-1">→ ${
+              step.action.href.startsWith("#")
+                ? `<a href="#" data-goto="${escapeHtml(step.action.href.slice(1))}">${escapeHtml(step.action.label)}</a>`
+                : link(step.action.href, step.action.label)
+            }</span>`}
         </span>
       </li>`).join("")}
     </ol>
@@ -668,8 +772,12 @@ function renderDashboard(root) {
            expiry.days <= 0
              ? `${account.name || account.id}: 期限切れ`
              : `${account.name || account.id}: 残り${expiry.days}日`).join(" / "))}<br />
-         GitHubの Actions タブ →「Token Refresh」→ Run workflow で更新を試してください。
-         それでも直らない場合は、READMEの手順でトークンを取り直してください。
+         <span class="block mt-1">
+           → ${link(repoLinks().tokenRefresh, "Token Refresh を開いて Run workflow を押す")}
+         </span>
+         <span class="block tiny">
+           それでも直らない場合は、アカウント編集画面の「トークンの取得のしかた」から取り直してください。
+         </span>
        </div>`
     : "";
 
@@ -680,7 +788,8 @@ function renderDashboard(root) {
 
   const workflowInfo = workflows
     ? `<p class="tiny sub">配信ワークフロー: <code class="code">${escapeHtml((workflows.files || []).join(", "))}</code>
-       （cron ${escapeHtml(workflows.cron_count ?? 0)} 件 / ${escapeHtml(workflows.file_count ?? 0)} ファイル）</p>`
+       （cron ${escapeHtml(workflows.cron_count ?? 0)} 件 / ${escapeHtml(workflows.file_count ?? 0)} ファイル）
+       ${link(repoLinks().actions, "Actions を開く")}</p>`
     : "";
 
   root.innerHTML = `
@@ -830,12 +939,14 @@ function renderSecrets(root) {
         <div class="row gap-xs">${secretBadge(secret.name)}</div>
       </div>
       <p class="small sub">${escapeHtml(secret.help)}</p>
-      <p class="tiny">
-        取得先:
-        <a class="underline" href="${escapeHtml(secret.link)}" target="_blank" rel="noopener">
-          ${escapeHtml(secret.linkLabel)}
-        </a>
-      </p>
+      ${secret.caution ? `<div class="alert-warn">${escapeHtml(secret.caution)}</div>` : ""}
+      <details>
+        <summary class="small bold" style="cursor: pointer;">取得のしかた</summary>
+        <ol class="ol small">
+          ${(secret.steps || []).map((step) => `<li>${escapeHtml(step)}</li>`).join("")}
+        </ol>
+        <p class="small mt-1">→ ${link(secret.link, secret.linkLabel + " を開く")}</p>
+      </details>
       <div class="col row-sm gap-xs">
         <input type="password" class="input mono flex-1" autocomplete="off"
                data-secret-input="${escapeHtml(secret.name)}"
@@ -1026,7 +1137,11 @@ function openAccountModal(index) {
 }
 
 function closeAccountModal() {
-  $("#acc-token").value = "";  // 平文をDOMに残さない
+  // 平文をDOMに残さない
+  $("#acc-token").value = "";
+  $("#exchange-secret").value = "";
+  $("#exchange-short").value = "";
+  $("#exchange-link").removeAttribute("href");
   $("#account-modal").classList.add("hidden");
   document.body.style.overflow = "";
 }
@@ -1047,7 +1162,34 @@ function updateSecretPreview() {
     : `${secretBadge(name)} <span class="tiny sub">投稿するにはトークンの登録が必要です</span>`;
 }
 
+/**
+ * 短命トークンを長寿命トークンへ交換するURLを組み立てる。
+ * 値はこのブラウザの中だけで使い、どこへも送信しない。
+ */
+function setupTokenExchange() {
+  const update = () => {
+    const secret = $("#exchange-secret").value.trim();
+    const short = $("#exchange-short").value.trim();
+    const anchor = $("#exchange-link");
+    if (!secret || !short) {
+      anchor.removeAttribute("href");
+      anchor.textContent = "→ 交換ページを開く（両方を入力してください）";
+      return;
+    }
+    const url = new URL("https://graph.threads.net/access_token");
+    url.searchParams.set("grant_type", "th_exchange_token");
+    url.searchParams.set("client_secret", secret);
+    url.searchParams.set("access_token", short);
+    anchor.href = url.toString();
+    anchor.textContent = "→ 交換ページを開く";
+  };
+  $("#exchange-secret").addEventListener("input", update);
+  $("#exchange-short").addEventListener("input", update);
+  update();
+}
+
 function setupAccountModal() {
+  setupTokenExchange();
   $("#account-modal-close").addEventListener("click", closeAccountModal);
   $("#account-cancel").addEventListener("click", closeAccountModal);
   $("#acc-id").addEventListener("input", updateSecretPreview);
