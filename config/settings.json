@@ -10,8 +10,14 @@
     "max": 30
   },
   "golden_time_ranges": [
-    ["07:00", "09:00"],
-    ["20:00", "23:00"]
+    [
+      "07:00",
+      "09:00"
+    ],
+    [
+      "20:00",
+      "23:00"
+    ]
   ],
   "min_gap_minutes": 20,
   "duplicate_exclusion_days": 14,
@@ -45,5 +51,8 @@
       "4": 2
     }
   },
-  "pr_text": "※PR"
+  "pr_text": "※PR",
+  "threads": {
+    "app_id": ""
+  }
 }

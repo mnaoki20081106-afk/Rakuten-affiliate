@@ -38,6 +38,15 @@ ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
 # 各アカウントの Threads トークンを入れる GitHub Secrets 名の接頭辞
 THREADS_TOKEN_PREFIX = "THREADS_TOKEN_"
 
+# Threads の OAuth 連携で使う値。
+# アプリIDは認可URLに必ず現れる公開値のため settings.json に保存し、
+# アプリシークレットだけを GitHub Secrets に置く。
+ENV_THREADS_APP_ID = "THREADS_APP_ID"
+ENV_THREADS_APP_SECRET = "THREADS_APP_SECRET"
+# 認可コードの受け渡し用。公開リポジトリの実行ログに残さないため、
+# 入力ではなく一時シークレットとして渡し、使用後に削除する
+THREADS_OAUTH_CODE_SECRET = "THREADS_OAUTH_CODE"
+
 # accounts.json に入っていてはいけないキー（過去バージョンからの移行検出用）
 FORBIDDEN_ACCOUNT_KEYS = frozenset(
     {"threads_access_token", "access_token", "token", "api_key", "anthropic_api_key",

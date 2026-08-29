@@ -35,8 +35,9 @@ def test_APIキーの取得先が4つとも用意されている():
 def test_APIキーごとに取得手順が書かれている():
     # GLOBAL_SECRETS の各項目に steps があること
     block = JS[JS.index("const GLOBAL_SECRETS = [") : JS.index("// src/config.py の DEFAULT_SETTINGS")]
-    assert block.count("name:") == 4
-    assert block.count("steps: [") == 4, "取得手順が無いAPIキーがあります"
+    entries = block.count("name:")
+    assert entries >= 4, entries
+    assert block.count("steps: [") == entries, "取得手順が無いAPIキーがあります"
     assert "取得のしかた" in JS
 
 
