@@ -528,3 +528,19 @@ dt { font-size: 12px; margin-bottom: 2px; }
 /* 記号1文字だけの code が潰れないようにする */
 code.code { display: inline-block; min-width: 1.2em; text-align: center; }
 code.code:not(:only-child) { text-align: left; }
+
+/* ------------------------------------------------------------------
+   規約・プライバシーポリシーなどの文書ページ
+   ------------------------------------------------------------------ */
+.doc { max-width: 760px; margin: 0 auto; padding: var(--gap-xl) 24px; }
+.doc h1 { font-size: clamp(30px, 7vw, 44px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.15; margin: 0 0 var(--gap-sm); }
+.doc h2 { font-size: 20px; font-weight: 800; margin: var(--gap-xl) 0 var(--gap-sm); padding-bottom: var(--gap-xs); border-bottom: var(--line-thick); }
+.doc h3 { font-size: 16px; font-weight: 700; margin: var(--gap-lg) 0 var(--gap-xs); }
+.doc p, .doc li { font-size: 15px; line-height: 1.9; }
+.doc ul, .doc ol { padding-left: 1.3em; }
+.doc li { margin-top: 6px; }
+.doc table { width: 100%; border-collapse: collapse; margin-top: var(--gap-sm); font-size: 14px; }
+.doc th, .doc td { text-align: left; padding: 12px 12px 12px 0; border-bottom: var(--line); vertical-align: top; }
+.doc th { font-size: 12px; font-weight: 800; letter-spacing: 0.05em; }
+.doc .updated { font-size: 13px; }
+.doc .fill { border-bottom: var(--line-thick); padding: 0 4px; font-weight: 700; }

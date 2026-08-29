@@ -33,11 +33,17 @@ const CONNECT_WORKFLOW = "threads_connect.yml";
 const OAUTH_STATE_KEY = "sns-admin-oauth";
 
 /**
- * Meta のアプリに登録するリダイレクトURL。
- * この管理画面自身のURL（クエリなし）をそのまま使う。
+ * この管理画面が置かれているディレクトリのURL。
+ * index.html を直接開いた場合でも同じ値になるよう、末尾のファイル名は落とす。
+ * Meta に登録するリダイレクトURLは完全一致で照合されるため、ここが揺れてはいけない。
  */
+function baseUrl() {
+  return `${location.origin}${location.pathname.replace(/[^/]*$/, "")}`;
+}
+
+/** Meta のアプリに登録するリダイレクトURL。 */
 function redirectUri() {
-  return `${location.origin}${location.pathname}`;
+  return baseUrl();
 }
 
 /** GitHubのトークン作成画面（必要な権限にチェックが入った状態で開く） */
@@ -1112,6 +1118,72 @@ function renderUsedItems() {
  * 「アプリを作る → リダイレクトURLを登録 → アプリIDとシークレットを保存」までを
  * 1つの流れとして見せる。リダイレクトURLはこの画面のURLから自動で決まる。
  */
+/**
+ * 開発モードとライブモードの違いと、あとで本審査に出すときの準備。
+ * 最初は開発モードのままで運用でき、必要になってから申請すればよい。
+ */
+function renderAppModeGuide() {
+  const origin = baseUrl();
+  return `<details class="mt-3">
+    <summary class="small bold" style="cursor: pointer;">開発モードのままで大丈夫？（ライブモードにする方法）</summary>
+
+    <p class="small mt-2">
+      <strong>自分のアカウントを運用するだけなら、開発モードのままで問題ありません。</strong>
+      ライブモードにするには Meta の本審査が必要ですが、審査を通さなくても
+      テスターに追加したアカウントであれば通常どおり投稿できます。
+    </p>
+
+    <table class="data mt-2">
+      <thead><tr><th></th><th>開発モード（最初はこちら）</th><th>ライブモード</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="bold">連携できるアカウント</td>
+          <td>アプリにテスターとして追加したアカウントのみ</td>
+          <td>制限なし</td>
+        </tr>
+        <tr>
+          <td class="bold">必要な手続き</td>
+          <td>なし（アカウントごとにテスター追加）</td>
+          <td>Meta の本審査（アプリレビュー）</td>
+        </tr>
+        <tr>
+          <td class="bold">向いている場面</td>
+          <td>自分のアカウントを運用する</td>
+          <td>他人にも使ってもらう</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p class="small mt-3 bold">あとで審査に出すときに必要になるもの</p>
+    <p class="tiny">
+      審査ではプライバシーポリシーと利用規約のURLを求められます。
+      このリポジトリに<strong>ひな形を用意してあります</strong>（運営者名と連絡先の記入が必要です）。
+    </p>
+    <div class="mt-2">
+      <label class="label" for="policy-privacy">プライバシーポリシー</label>
+      <input id="policy-privacy" class="input mono" readonly value="${escapeHtml(origin)}privacy.html" />
+      <p class="tiny mt-1">
+        ${link(`${origin}privacy.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}privacy.html">URLをコピー</button>
+      </p>
+    </div>
+    <div class="mt-2">
+      <label class="label" for="policy-terms">利用規約</label>
+      <input id="policy-terms" class="input mono" readonly value="${escapeHtml(origin)}terms.html" />
+      <p class="tiny mt-1">
+        ${link(`${origin}terms.html`, "内容を確認する")}
+        ・<button type="button" class="btn-ghost btn-sm" data-copy="${escapeHtml(origin)}terms.html">URLをコピー</button>
+      </p>
+    </div>
+
+    <p class="tiny mt-3">
+      このほか、審査ではビジネス認証や、実際の利用の様子を撮った動画などを求められる場合があります。
+      要件は変わるため、申請時に Meta の画面の案内を確認してください。
+    </p>
+  </details>`;
+}
+
+
 function renderThreadsAppCard() {
   const appId = threadsAppId();
   const secretOk = secretStatus(THREADS_APP_SECRET_SECRET).registered;
@@ -1190,7 +1262,24 @@ function renderThreadsAppCard() {
           </span>
         </span>
       </li>
+
+      <li>
+        <span class="step-no">5</span>
+        <span class="min-w-0">
+          <span class="bold">運用するアカウントをテスターに追加する</span>
+          <span class="block tiny">
+            作ったばかりのアプリは<strong>開発モード</strong>です。この状態で連携できるのは、
+            アプリに役割を持つアカウントだけなので、運用する各Threadsアカウントを
+            <strong>テスター</strong>として追加し、そのアカウント側で招待を承認してください。
+          </span>
+          <span class="block tiny mt-1">
+            Metaのアプリ設定 → アプリロール → role → テスターを追加
+          </span>
+        </span>
+      </li>
     </ol>
+
+    ${renderAppModeGuide()}
 
     ${ready ? `<div class="alert-info mt-3">
       設定は完了しています。「アカウント管理」タブの各アカウントにある
@@ -1199,16 +1288,24 @@ function renderThreadsAppCard() {
   </div>`;
 }
 
+/** クリップボードへコピーする。使えない環境では選択状態にして手動コピーを促す。 */
+async function copyText(value, fallbackInput) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("URLをコピーしました", "success");
+  } catch {
+    fallbackInput?.select();
+    toast("URLを選択しました。長押ししてコピーしてください。", "info");
+  }
+}
+
 function setupThreadsAppCard(root) {
-  root.querySelector("#copy-redirect")?.addEventListener("click", async () => {
-    try {
-      await navigator.clipboard.writeText(redirectUri());
-      toast("リダイレクトURLをコピーしました", "success");
-    } catch {
-      // クリップボードが使えない環境では選択状態にして手動コピーを促す
-      root.querySelector("#redirect-uri").select();
-      toast("URLを選択しました。長押ししてコピーしてください。", "info");
-    }
+  root.querySelector("#copy-redirect")?.addEventListener("click", () =>
+    copyText(redirectUri(), root.querySelector("#redirect-uri")));
+
+  root.querySelectorAll("[data-copy]").forEach((button) => {
+    button.addEventListener("click", () =>
+      copyText(button.dataset.copy, button.closest("div")?.querySelector("input")));
   });
 
   root.querySelector("#save-app-id")?.addEventListener("click", async (event) => {
