@@ -423,7 +423,7 @@ function secretBadge(name) {
   if (!status.known) return '<span class="badge badge-pending">状態不明</span>';
   if (!status.registered) return '<span class="badge badge-expired">未登録</span>';
   return `<span class="badge badge-sent">登録済み</span>
-    <span class="text-xs text-muted">${escapeHtml(formatDateTime(status.updatedAt))} 更新</span>`;
+    <span class="tiny sub">${escapeHtml(formatDateTime(status.updatedAt))} 更新</span>`;
 }
 
 // ======================================================================
@@ -588,7 +588,7 @@ function queuePosts() {
 }
 
 function statCard(value, label) {
-  return `<div class="card p-4">
+  return `<div class="stat">
     <div class="stat-value">${escapeHtml(value)}</div>
     <div class="stat-label">${escapeHtml(label)}</div>
   </div>`;
@@ -632,22 +632,21 @@ function renderSetupChecklist() {
 
   if (steps.every((step) => step.done)) return "";
 
-  return `<div class="card p-4">
-    <h2 class="font-bold mb-1">セットアップの進み具合</h2>
-    <p class="text-xs text-muted mb-3">すべて緑になれば自動運用が始まります。</p>
-    <ol class="space-y-2">
-      ${steps.map((step, index) => `<li class="flex items-start gap-3 text-sm">
-        <span class="badge ${step.done ? "badge-sent" : "badge-pending"} shrink-0">
-          ${step.done ? "✓" : index + 1}
-        </span>
+  return `<div class="card pad-lg">
+    <h2 class="h2">セットアップの進み具合</h2>
+    <p class="sub mb-3">すべて済みになれば自動運用が始まります。</p>
+    <ol class="steps">
+      ${steps.map((step, index) => `<li>
+        <span class="step-no ${step.done ? "done" : ""}">${step.done ? "✓" : index + 1}</span>
         <span class="min-w-0">
-          <span class="${step.done ? "text-muted" : "font-medium"}">${escapeHtml(step.label)}</span>
-          <span class="block text-xs text-muted">${escapeHtml(step.hint)}</span>
+          <span class="${step.done ? "sub" : "bold"}">${escapeHtml(step.label)}</span>
+          <span class="block tiny">${escapeHtml(step.hint)}</span>
         </span>
       </li>`).join("")}
     </ol>
   </div>`;
 }
+
 
 function renderDashboard(root) {
   const posts = queuePosts();
@@ -680,45 +679,46 @@ function renderDashboard(root) {
     : "";
 
   const workflowInfo = workflows
-    ? `<p class="text-xs text-muted">配信ワークフロー: <code class="code">${escapeHtml((workflows.files || []).join(", "))}</code>
+    ? `<p class="tiny sub">配信ワークフロー: <code class="code">${escapeHtml((workflows.files || []).join(", "))}</code>
        （cron ${escapeHtml(workflows.cron_count ?? 0)} 件 / ${escapeHtml(workflows.file_count ?? 0)} ファイル）</p>`
     : "";
 
   root.innerHTML = `
+    <h1 class="h1">ダッシュボード</h1>
     ${banner}
     ${tokenBanner}
     ${renderSetupChecklist()}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+    <div class="grid-4">
       ${statCard(state.accounts.filter((a) => a.enabled).length, "有効なアカウント")}
       ${statCard(posts.length, `予約投稿（${state.queue?.target_date || "未生成"}）`)}
       ${statCard(sent, "送信済み")}
       ${statCard(history.length, "累計投稿数")}
     </div>
 
-    <div class="card p-4 space-y-1">
-      <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-        <span class="text-muted">最終バッチ:</span>
+    <div class="card stack-xs">
+      <div class="row wrap gap-sm gap-xs small">
+        <span class="sub">最終バッチ:</span>
         <span>${escapeHtml(state.runLog?.generated_at ? formatDateTime(state.runLog.generated_at) + " JST" : "未実行")}</span>
-        <span class="text-muted">配信対象日:</span>
+        <span class="sub">配信対象日:</span>
         <span>${escapeHtml(state.queue?.target_date || "-")}</span>
         ${failed ? `<span class="badge badge-failed">失敗 ${failed} 件</span>` : ""}
       </div>
       ${workflowInfo}
     </div>
 
-    <div class="card p-4">
-      <h2 class="font-bold mb-3">予約キュー</h2>
+    <div class="card">
+      <h2 class="section-title">予約キュー</h2>
       ${renderQueueSection()}
     </div>
 
-    <div class="card p-4">
-      <h2 class="font-bold mb-3">投稿履歴</h2>
+    <div class="card">
+      <h2 class="section-title">投稿履歴</h2>
       ${renderHistoryTable()}
     </div>
 
-    <div class="card p-4">
-      <h2 class="font-bold mb-1">紹介済み商品</h2>
-      <p class="text-xs text-muted mb-3">過去 ${escapeHtml(state.settings.duplicate_exclusion_days)} 日以内の商品は次回のリサーチから除外されます。</p>
+    <div class="card">
+      <h2 class="section-title">紹介済み商品</h2>
+      <p class="tiny sub mb-3">過去 ${escapeHtml(state.settings.duplicate_exclusion_days)} 日以内の商品は次回のリサーチから除外されます。</p>
       ${renderUsedItems()}
     </div>
   `;
@@ -727,7 +727,7 @@ function renderDashboard(root) {
 function renderQueueSection() {
   const entries = Object.entries(state.queue?.accounts || {});
   if (!entries.length) {
-    return `<p class="text-sm text-muted">キューが空です。GitHub Actions の <code class="code">Batch Generator</code> を実行すると翌日分が生成されます。</p>`;
+    return `<p class="small sub">キューが空です。GitHub Actions の <code class="code">Batch Generator</code> を実行すると翌日分が生成されます。</p>`;
   }
 
   return entries.map(([accountId, entry]) => {
@@ -735,16 +735,16 @@ function renderQueueSection() {
     const rows = posts.map((post) => {
       const status = post.status || "pending";
       const item = post.item || {};
-      return `<div class="border-t border-slate-200 dark:border-slate-800 pt-3 mt-3 space-y-2">
-        <div class="flex flex-wrap items-center gap-2 text-sm">
-          <span class="font-mono font-bold">${escapeHtml(formatDateTime(post.scheduled_at_jst, false))}</span>
+      return `<div class="sep-top pt-3 mt-3 stack-xs">
+        <div class="row wrap gap-xs small">
+          <span class="mono bold">${escapeHtml(formatDateTime(post.scheduled_at_jst, false))}</span>
           <span class="badge badge-${escapeHtml(status)}">${escapeHtml(STATUS_LABEL[status] || status)}</span>
           ${post.is_golden_time ? '<span class="badge badge-golden">ゴールデン</span>' : ""}
-          <span class="text-xs text-muted">順位 ${escapeHtml(item.rank ?? "-")}</span>
-          ${post.probability != null ? `<span class="text-xs text-muted">伸びる確率 ${escapeHtml(post.probability)}%</span>` : ""}
+          <span class="tiny sub">順位 ${escapeHtml(item.rank ?? "-")}</span>
+          ${post.probability != null ? `<span class="tiny sub">伸びる確率 ${escapeHtml(post.probability)}%</span>` : ""}
         </div>
         <div class="post-body">${escapeHtml(post.body)}</div>
-        <div class="text-xs text-muted break-all">
+        <div class="tiny sub break-all">
           ${escapeHtml(item.item_name || "")}
           ${post.affiliate_url ? `<br /><a class="underline" href="${escapeHtml(post.affiliate_url)}" target="_blank" rel="noopener">${escapeHtml(post.affiliate_url)}</a>` : ""}
         </div>
@@ -753,9 +753,9 @@ function renderQueueSection() {
     }).join("");
 
     return `<details class="account-queue mb-2">
-      <summary class="py-2 font-medium text-sm">
+      <summary class="medium small">
         ${escapeHtml(entry.account_name || accountId)}
-        <span class="text-muted font-normal">（${posts.length} 件）</span>
+        <span class="sub normal">（${posts.length} 件）</span>
       </summary>
       <div class="pl-2">${rows}</div>
     </details>`;
@@ -764,20 +764,20 @@ function renderQueueSection() {
 
 function renderHistoryTable() {
   const posts = [...(state.history.posts || [])].reverse().slice(0, 100);
-  if (!posts.length) return `<p class="text-sm text-muted">まだ投稿履歴がありません。</p>`;
+  if (!posts.length) return `<p class="small sub">まだ投稿履歴がありません。</p>`;
 
   const rows = posts.map((post) => `<tr>
-    <td class="whitespace-nowrap">${escapeHtml(formatDateTime(post.published_at_jst || post.published_at))}</td>
+    <td class="nowrap">${escapeHtml(formatDateTime(post.published_at_jst || post.published_at))}</td>
     <td>${escapeHtml(post.account_name || post.account_id)}</td>
-    <td class="text-right font-mono">${escapeHtml(post.likes ?? 0)}</td>
+    <td class="right mono">${escapeHtml(post.likes ?? 0)}</td>
     <td>${post.is_repost ? '<span class="badge badge-on">再投稿</span>' : ""}</td>
-    <td class="max-w-md"><div class="truncate">${escapeHtml((post.body || "").replace(/\n/g, " "))}</div></td>
-    <td class="max-w-xs"><div class="truncate text-muted">${escapeHtml(post.item?.item_name || "")}</div></td>
+    <td class="clip"><div class="truncate">${escapeHtml((post.body || "").replace(/\n/g, " "))}</div></td>
+    <td class="clip"><div class="truncate sub">${escapeHtml(post.item?.item_name || "")}</div></td>
   </tr>`).join("");
 
-  return `<div class="table-wrap"><table class="data">
+  return `<div class="scroll-x"><table class="data">
     <thead><tr>
-      <th>投稿日時(JST)</th><th>アカウント</th><th class="text-right">いいね</th>
+      <th>投稿日時(JST)</th><th>アカウント</th><th class="right">いいね</th>
       <th></th><th>本文</th><th>商品</th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -786,22 +786,22 @@ function renderHistoryTable() {
 
 function renderUsedItems() {
   const entries = Object.entries(state.used?.accounts || {});
-  if (!entries.length) return `<p class="text-sm text-muted">記録がありません。</p>`;
+  if (!entries.length) return `<p class="small sub">記録がありません。</p>`;
 
   return entries.map(([accountId, items]) => {
     const rows = [...(items || [])].reverse().slice(0, 50).map((item) => `<tr>
-      <td class="font-mono text-xs">${escapeHtml(item.item_code)}</td>
-      <td><div class="truncate max-w-md">${escapeHtml(item.item_name)}</div></td>
-      <td class="text-right">${escapeHtml(item.rank ?? "")}</td>
-      <td class="whitespace-nowrap">${escapeHtml(item.target_date || "")}</td>
+      <td class="mono tiny">${escapeHtml(item.item_code)}</td>
+      <td><div class="truncate clip">${escapeHtml(item.item_name)}</div></td>
+      <td class="right">${escapeHtml(item.rank ?? "")}</td>
+      <td class="nowrap">${escapeHtml(item.target_date || "")}</td>
     </tr>`).join("");
 
     return `<details class="account-queue mb-2">
-      <summary class="py-2 font-medium text-sm">
-        ${escapeHtml(accountId)} <span class="text-muted font-normal">（${(items || []).length} 件）</span>
+      <summary class="medium small">
+        ${escapeHtml(accountId)} <span class="sub normal">（${(items || []).length} 件）</span>
       </summary>
-      <div class="table-wrap"><table class="data">
-        <thead><tr><th>itemCode</th><th>商品名</th><th class="text-right">順位</th><th>使用日</th></tr></thead>
+      <div class="scroll-x"><table class="data">
+        <thead><tr><th>itemCode</th><th>商品名</th><th class="right">順位</th><th>使用日</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
     </details>`;
@@ -821,23 +821,23 @@ function renderSecrets(root) {
        </div>`;
 
   const cards = GLOBAL_SECRETS.map((secret) => `
-    <div class="card p-4 space-y-3">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <div class="card stack-sm">
+      <div class="wrap between gap-xs">
         <div class="min-w-0">
-          <h3 class="font-bold">${escapeHtml(secret.label)}</h3>
+          <h3 class="bold">${escapeHtml(secret.label)}</h3>
           <code class="code">${escapeHtml(secret.name)}</code>
         </div>
-        <div class="flex items-center gap-2">${secretBadge(secret.name)}</div>
+        <div class="row gap-xs">${secretBadge(secret.name)}</div>
       </div>
-      <p class="text-sm text-muted">${escapeHtml(secret.help)}</p>
-      <p class="text-xs">
+      <p class="small sub">${escapeHtml(secret.help)}</p>
+      <p class="tiny">
         取得先:
         <a class="underline" href="${escapeHtml(secret.link)}" target="_blank" rel="noopener">
           ${escapeHtml(secret.linkLabel)}
         </a>
       </p>
-      <div class="flex flex-col sm:flex-row gap-2">
-        <input type="password" class="input font-mono flex-1" autocomplete="off"
+      <div class="col row-sm gap-xs">
+        <input type="password" class="input mono flex-1" autocomplete="off"
                data-secret-input="${escapeHtml(secret.name)}"
                placeholder="${escapeHtml(secret.placeholder)}" />
         <button class="btn-primary shrink-0" data-secret-save="${escapeHtml(secret.name)}">
@@ -848,8 +848,8 @@ function renderSecrets(root) {
 
   root.innerHTML = `
     <div>
-      <h2 class="font-bold">APIキー（GitHub Secrets）</h2>
-      <p class="text-xs text-muted">
+      <h2 class="h1">APIキー</h2>
+      <p class="tiny sub">
         入力した値はこのブラウザの中で暗号化されてから送信され、GitHub Secrets に保存されます。
         リポジトリのファイルには一切書き込まれません。
       </p>
@@ -860,22 +860,22 @@ function renderSecrets(root) {
       変更したいときは新しい値を入力して上書き保存してください。
     </div>
     ${cards}
-    <div class="card p-4">
-      <h3 class="font-bold text-sm mb-2">各アカウントのThreadsトークン</h3>
-      <p class="text-xs text-muted mb-3">
+    <div class="card">
+      <h3 class="section-title">各アカウントのThreadsトークン</h3>
+      <p class="tiny sub mb-3">
         アカウントごとのトークンは「アカウント管理」タブの各アカウントの編集画面から登録します。<br />
         登録後は毎週日曜に自動で有効期限が延長されるため、通常は手作業での更新は不要です
         （Actions タブの「Token Refresh」から手動実行もできます）。
       </p>
-      ${state.accounts.length ? `<div class="table-wrap"><table class="data">
+      ${state.accounts.length ? `<div class="scroll-x"><table class="data">
         <thead><tr><th>アカウント</th><th>シークレット名</th><th>状態</th><th>有効期限</th></tr></thead>
         <tbody>${state.accounts.map((account) => `<tr>
           <td>${escapeHtml(account.name || account.id)}</td>
           <td><code class="code">${escapeHtml(tokenSecretName(account.id))}</code></td>
           <td>${secretBadge(tokenSecretName(account.id))}</td>
-          <td>${expiryBadge(account.id) || '<span class="text-muted text-xs">未更新</span>'}</td>
+          <td>${expiryBadge(account.id) || '<span class="sub tiny">未更新</span>'}</td>
         </tr>`).join("")}</tbody>
-      </table></div>` : '<p class="text-sm text-muted">アカウントが未登録です。</p>'}
+      </table></div>` : '<p class="small sub">アカウントが未登録です。</p>'}
     </div>
   `;
 
@@ -911,33 +911,33 @@ function renderSecrets(root) {
 function renderAccounts(root) {
   const cards = state.accounts.map((account, index) => {
     const secretName = tokenSecretName(account.id);
-    return `<div class="card p-4 space-y-3">
-      <div class="flex items-start gap-3">
+    return `<div class="card stack-sm">
+      <div class="row start gap-sm">
         <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-2">
-            <h3 class="font-bold truncate">${escapeHtml(account.name || account.id)}</h3>
+          <div class="row wrap gap-xs">
+            <h3 class="bold truncate">${escapeHtml(account.name || account.id)}</h3>
             <span class="badge ${account.enabled ? "badge-on" : "badge-off"}">${account.enabled ? "有効" : "無効"}</span>
           </div>
-          <p class="text-xs text-muted font-mono">${escapeHtml(account.id)}</p>
+          <p class="tiny sub mono">${escapeHtml(account.id)}</p>
         </div>
-        <div class="flex gap-1 shrink-0">
+        <div class="row gap-xs shrink-0">
           <button class="btn-ghost" data-action="edit" data-index="${index}">編集</button>
           <button class="btn-danger" data-action="delete" data-index="${index}">削除</button>
         </div>
       </div>
 
-      <dl class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+      <dl class="grid-3 small">
         <div><dt class="stat-label">ジャンル</dt><dd>${escapeHtml(account.genre || "-")}</dd></div>
         <div><dt class="stat-label">世界観</dt><dd>${escapeHtml(account.worldview || "-")}</dd></div>
         <div><dt class="stat-label">強み</dt><dd>${escapeHtml(account.strength || "-")}</dd></div>
       </dl>
 
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+      <div class="row wrap gap-sm gap-xs tiny sub">
         <span>1日 ${escapeHtml(account.posts_per_day)} 投稿</span>
         <span>キーワード: ${escapeHtml((account.search_keywords || []).join(" / ") || account.genre || "-")}</span>
       </div>
-      <div class="flex flex-wrap items-center gap-2 text-xs">
-        <span class="text-muted">Threadsトークン:</span>
+      <div class="row wrap gap-xs tiny">
+        <span class="sub">Threadsトークン:</span>
         ${secretBadge(secretName)}
         ${expiryBadge(account.id)}
         <code class="code">${escapeHtml(secretName)}</code>
@@ -946,17 +946,17 @@ function renderAccounts(root) {
   }).join("");
 
   root.innerHTML = `
-    <div class="flex items-center justify-between gap-3">
+    <div class="between gap-sm">
       <div>
-        <h2 class="font-bold">アカウント管理</h2>
-        <p class="text-xs text-muted">
+        <h2 class="h1">アカウント</h2>
+        <p class="tiny sub">
           テーマは <code class="code">config/accounts.json</code> に、トークンは暗号化して GitHub Secrets に保存されます。
         </p>
       </div>
       <button id="add-account" class="btn-primary shrink-0">＋ 追加</button>
     </div>
 
-    ${cards || '<div class="card p-8 text-center text-muted text-sm">アカウントがまだ登録されていません。「＋ 追加」から登録してください。</div>'}
+    ${cards || '<div class="card pad-lg center-text sub small">アカウントがまだ登録されていません。「＋ 追加」から登録してください。</div>'}
   `;
 
   $("#add-account")?.addEventListener("click", () => openAccountModal(-1));
@@ -1043,8 +1043,8 @@ function updateSecretPreview() {
   }
   const status = secretStatus(name);
   statusBox.innerHTML = status.registered
-    ? `${secretBadge(name)} <span class="text-xs text-muted">変更する場合のみ入力してください</span>`
-    : `${secretBadge(name)} <span class="text-xs text-muted">投稿するにはトークンの登録が必要です</span>`;
+    ? `${secretBadge(name)} <span class="tiny sub">変更する場合のみ入力してください</span>`
+    : `${secretBadge(name)} <span class="tiny sub">投稿するにはトークンの登録が必要です</span>`;
 }
 
 function setupAccountModal() {
@@ -1140,13 +1140,13 @@ function renderSettings(root) {
   const golden = (s.golden_time_ranges || []).map((r) => `${r[0]}-${r[1]}`).join("\n");
 
   root.innerHTML = `
-    <div class="card p-4 space-y-4">
+    <div class="card stack-sm">
       <div>
-        <h2 class="font-bold">共通設定</h2>
-        <p class="text-xs text-muted"><code class="code">config/settings.json</code> を編集します。全アカウント共通の設定です。</p>
+        <h2 class="h1">共通設定</h2>
+        <p class="tiny sub"><code class="code">config/settings.json</code> を編集します。全アカウント共通の設定です。</p>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="grid-2">
         <div>
           <label class="label" for="set-posts">1日の投稿数（時間枠の数）</label>
           <input id="set-posts" type="number" min="1" max="20" class="input" value="${escapeHtml(s.posts_per_day)}" />
@@ -1158,11 +1158,11 @@ function renderSettings(root) {
         </div>
         <div>
           <label class="label" for="set-start">活動開始（JST）</label>
-          <input id="set-start" class="input font-mono" value="${escapeHtml(s.active_hours?.start)}" placeholder="07:00" />
+          <input id="set-start" class="input mono" value="${escapeHtml(s.active_hours?.start)}" placeholder="07:00" />
         </div>
         <div>
           <label class="label" for="set-end">活動終了（JST）</label>
-          <input id="set-end" class="input font-mono" value="${escapeHtml(s.active_hours?.end)}" placeholder="23:00" />
+          <input id="set-end" class="input mono" value="${escapeHtml(s.active_hours?.end)}" placeholder="23:00" />
         </div>
         <div>
           <label class="label" for="set-jitter-min">投稿時刻のゆらぎ 最小（分）</label>
@@ -1179,7 +1179,7 @@ function renderSettings(root) {
         </div>
         <div>
           <label class="label" for="set-model">Claudeのモデル</label>
-          <input id="set-model" class="input font-mono" value="${escapeHtml(s.claude?.model)}" />
+          <input id="set-model" class="input mono" value="${escapeHtml(s.claude?.model)}" />
         </div>
         <div>
           <label class="label" for="set-pr">PR表記</label>
@@ -1194,11 +1194,11 @@ function renderSettings(root) {
 
       <div>
         <label class="label" for="set-golden">ゴールデンタイム（1行1区間、<code class="code">開始-終了</code>）</label>
-        <textarea id="set-golden" class="input font-mono" rows="3">${escapeHtml(golden)}</textarea>
+        <textarea id="set-golden" class="input mono" rows="3">${escapeHtml(golden)}</textarea>
         <p class="hint">売れ筋ランキング上位の商品がこの時間帯へ優先的に割り当てられます。</p>
       </div>
 
-      <button id="save-settings" class="btn-primary w-full sm:w-auto">保存してコミット</button>
+      <button id="save-settings" class="btn-primary full w-auto-sm">保存してコミット</button>
     </div>
   `;
 
@@ -1243,10 +1243,10 @@ function renderSettings(root) {
 // ======================================================================
 function renderPrompt(root) {
   root.innerHTML = `
-    <div class="card p-4 space-y-4">
+    <div class="card stack-sm">
       <div>
-        <h2 class="font-bold">投稿生成プロンプト</h2>
-        <p class="text-xs text-muted"><code class="code">${escapeHtml(PATHS.prompt)}</code> を編集します。</p>
+        <h2 class="h1">プロンプト</h2>
+        <p class="tiny sub"><code class="code">${escapeHtml(PATHS.prompt)}</code> を編集します。</p>
       </div>
 
       <div class="alert-warn">
@@ -1257,9 +1257,9 @@ function renderPrompt(root) {
         空のまま保存すると、組み込みの既定プロンプトが使われます。
       </div>
 
-      <textarea id="prompt-text" class="input font-mono" rows="20">${escapeHtml(state.prompt)}</textarea>
+      <textarea id="prompt-text" class="input mono" rows="20">${escapeHtml(state.prompt)}</textarea>
 
-      <div class="flex gap-2">
+      <div class="row gap-xs">
         <button id="save-prompt" class="btn-primary">保存してコミット</button>
         <button id="reset-prompt" class="btn-ghost">編集を取り消す</button>
       </div>
@@ -1308,10 +1308,6 @@ function setupChrome() {
 }
 
 async function main() {
-  // Tailwind CDN が読み込めなかった場合はフォールバックCSSへ切り替える
-  if (!window.tailwind) {
-    document.documentElement.classList.add("no-tailwind");
-  }
   // 暗号化ライブラリはリポジトリに同梱しているが、念のため状態を見ておく
   if (typeof window.sodium === "undefined") {
     $("#sodium-error")?.classList.remove("hidden");
