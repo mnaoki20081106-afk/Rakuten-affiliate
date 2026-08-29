@@ -1,0 +1,59 @@
+name: publish_job
+
+# 【当日の配信処理】親投稿 + PR リプライ
+# JST 7:00〜23:00 を 15 分間隔で監視する（JST 7:00 = UTC 22:00 / JST 23:00 = UTC 14:00）
+on:
+  schedule:
+    - cron: "*/15 0-14,22-23 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "送信せず対象だけ表示する"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-store
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: Python をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 依存パッケージをインストール
+        run: pip install -r requirements.txt
+
+      - name: 予約時刻を過ぎた投稿を配信
+        env:
+          # アカウントごとのトークンは THREADS_TOKEN_<アカウントID大文字> で渡す
+          # 方法A: アカウントを増やしたらこの行を増やす（THREADS_TOKEN_<アカウントID大文字>）
+          THREADS_TOKEN_BEAUTY: ${{ secrets.THREADS_TOKEN_BEAUTY }}
+          THREADS_TOKEN_LIVING: ${{ secrets.THREADS_TOKEN_LIVING }}
+          # 方法B: 1 つの Secret にまとめる場合（例: {"beauty": "THAA...", "living": "THAA..."}）
+          THREADS_TOKENS_JSON: ${{ secrets.THREADS_TOKENS_JSON }}
+          PR_REPLY_TEMPLATE: ${{ vars.PR_REPLY_TEMPLATE }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            python -m src.publisher --dry-run
+          else
+            python -m src.publisher
+          fi
+
+      - name: 差分をコミット・プッシュ
+        run: |
+          bash .github/scripts/commit_data.sh "chore(publish): 配信結果を反映"

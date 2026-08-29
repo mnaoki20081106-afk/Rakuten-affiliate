@@ -1,0 +1,6 @@
+# Streamlit 管理画面
+streamlit>=1.50.0,<2.0.0
+# Claude API（Anthropic 公式 SDK）
+anthropic>=1.0.0,<2.0.0
+# 楽天商品検索 API / Threads Graph API の HTTP 呼び出し
+requests>=2.32.0,<3.0.0

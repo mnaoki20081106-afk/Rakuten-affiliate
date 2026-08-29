@@ -1,0 +1,73 @@
+{
+  "updated_at": "2026-01-01T00:00:00+09:00",
+  "accounts": [
+    {
+      "id": "beauty",
+      "name": "美容系アカウント",
+      "enabled": true,
+      "theme": {
+        "genre": "20〜30代女性向けのスキンケア・美容グッズ",
+        "worldview": "頑張りすぎない、それでも自分をちゃんと大事にする日常",
+        "strength": "ドラッグストアで買える価格帯の中から、成分で選んだ本当に効くものだけを紹介",
+        "tone": "やさしく親しみやすい丁寧語",
+        "target": "仕事と家事で肌ケアの時間が取れない20〜30代女性"
+      },
+      "rakuten": {
+        "keyword": "スキンケア 保湿",
+        "genre_id": "",
+        "min_price": 1000,
+        "max_price": 8000,
+        "sort": "-reviewCount"
+      },
+      "threads": {
+        "user_id": "1234567890",
+        "token": "",
+        "token_env": "THREADS_TOKEN_BEAUTY"
+      },
+      "schedule": {
+        "active_start": "07:00",
+        "active_end": "23:00",
+        "slot_count": 7,
+        "golden_windows": [["07:00", "09:00"], ["20:00", "23:00"]],
+        "golden_slot_count": 4,
+        "jitter_min_minutes": 15,
+        "jitter_max_minutes": 30,
+        "min_gap_minutes": 30
+      }
+    },
+    {
+      "id": "living",
+      "name": "生活用品系アカウント",
+      "enabled": true,
+      "theme": {
+        "genre": "一人暮らし・共働き世帯向けの時短生活用品",
+        "worldview": "家事は頑張るものではなく、仕組みで減らすもの",
+        "strength": "実際に使って家事時間が減ったものだけを、削れた時間つきで紹介",
+        "tone": "気さくでテンポの良い口語",
+        "target": "平日は家事に時間を割けない共働き世帯"
+      },
+      "rakuten": {
+        "keyword": "時短 キッチン 便利グッズ",
+        "genre_id": "",
+        "min_price": 800,
+        "max_price": 6000,
+        "sort": "-reviewCount"
+      },
+      "threads": {
+        "user_id": "9876543210",
+        "token": "",
+        "token_env": "THREADS_TOKEN_LIVING"
+      },
+      "schedule": {
+        "active_start": "07:00",
+        "active_end": "23:00",
+        "slot_count": 7,
+        "golden_windows": [["07:00", "09:00"], ["20:00", "23:00"]],
+        "golden_slot_count": 4,
+        "jitter_min_minutes": 15,
+        "jitter_max_minutes": 30,
+        "min_gap_minutes": 30
+      }
+    }
+  ]
+}
