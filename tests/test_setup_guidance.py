@@ -140,3 +140,21 @@ def test_手順の本文列は幅いっぱいに広がる():
     css = (DOCS / "style.css").read_text(encoding="utf-8")
     assert ".steps li > :last-child" in css
     assert "flex: 1 1 auto" in css
+
+
+def test_ウィザードは画面全体を占める():
+    """背景のページが見えていると集中できないため、ダイアログではなく専用画面にする。"""
+    css = (DOCS / "style.css").read_text(encoding="utf-8")
+    block = css[css.index(".wizard {") : css.index(".wizard-inner")]
+    assert "position: fixed" in block
+    assert "inset: 0" in block
+    assert "background: var(--bg)" in block          # 背後を透かさない
+    # 上に進捗、下に移動ボタンを固定し、本文だけがスクロールする
+    assert ".wizard-bar" in css and ".wizard-foot" in css
+    assert "overflow-y: auto" in css[css.index(".wizard-scroll") : css.index(".wizard-foot {")]
+    for slot in ("setup-count", "setup-dots", "setup-body", "setup-foot", "setup-scroll"):
+        assert f'id="{slot}"' in HTML, f"{slot} がありません"
+
+
+def test_通知が積み上がって画面を覆わない():
+    assert "area.children.length > 3" in JS
